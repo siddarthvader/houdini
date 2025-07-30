@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,12 +47,7 @@ func writeSelectionDocument(
 	}
 
 	// compute the filepath to write the artifact to
-	artifactPath := path.Join(
-		projectConfig.ProjectRoot,
-		projectConfig.RuntimeDir,
-		"artifacts",
-		name+".js",
-	)
+	artifactPath := projectConfig.ArtifactPath(name)
 
 	// write the file to disk
 	err = afero.WriteFile(fs, artifactPath, []byte(artifact), 0644)

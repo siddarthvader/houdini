@@ -2,7 +2,6 @@ package artifacts_test
 
 import (
 	"context"
-	"path"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -1985,7 +1984,7 @@ func TestArtifactGeneration(t *testing.T) {
                       "defaults": {},
 
                       "runtimeScalars": {
-                          "id": "ViewerIDFromSession",
+                            "id": "ViewerIDFromSession",
                       },
                   },
 
@@ -3234,12 +3233,7 @@ func performArtifactTest(
 		expected := c.(string)
 
 		// the artifact is located at .houdini/artifacts/<name>.js
-		artifactPath := path.Join(
-			projectConfig.ProjectRoot,
-			projectConfig.RuntimeDir,
-			"artifacts",
-			name+".js",
-		)
+		artifactPath := projectConfig.ArtifactPath(name)
 
 		// read the file
 		file, err := p.Fs.Open(artifactPath)
