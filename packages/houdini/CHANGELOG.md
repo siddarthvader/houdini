@@ -1,5 +1,11 @@
 # houdini
 
+## 1.5.10
+
+### Patch Changes
+
+-   [#1517](https://github.com/HoudiniGraphql/houdini/pull/1517) [`0acc49de`](https://github.com/HoudiniGraphql/houdini/commit/0acc49de8317e68cf350d07b0276a1af467d3252) Thanks [@SeppahBaws](https://github.com/SeppahBaws)! - Export plugin static runtime types in .houdini/index.d.ts
+
 ## 1.5.9
 
 ### Patch Changes
