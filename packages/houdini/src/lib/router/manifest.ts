@@ -76,7 +76,9 @@ export async function load_manifest(args: {
 
 			if (name === '+schema') {
 				manifest.local_schema = true
-			} else if (name === '+yoga') {
+			} 
+
+      if (name === '+yoga') {
 				manifest.local_yoga = true
 			}
 		}

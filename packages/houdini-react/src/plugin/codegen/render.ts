@@ -146,7 +146,7 @@ export function createServerAdapter(options) {
 				? `import schema from '../../../../../src/api/+schema'`
 				: ' const schema = null'
 		}
-		${manifest.local_yoga ? `import yoga from '.../../../../../src/api/+yoga'` : ' const yoga = null'}
+		${manifest.local_yoga ? `import yoga from '../../../../../src/api/+yoga'` : ' const yoga = null'}
 
 		export const endpoint = ${JSON.stringify(localApiEndpoint(config.configFile))}
 
