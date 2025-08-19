@@ -5,7 +5,7 @@ export default defineConfig({
 	workers: 5,
 	reporter: process.env.CI ? [['list'], ['html'], ['github']] : [['list']],
 	use: { screenshot: 'only-on-failure' },
-	testIgnore: '**/$houdini/**',
+	testIgnore: '**/.houdini/**',
 	testMatch: 'test.ts',
 
 	webServer: {

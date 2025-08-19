@@ -50,8 +50,8 @@ export default function Plugin(opts: PluginConfig = {}): VitePlugin {
 			// Check if directory, file type matches what's defined in houdini config
 			const shouldReact = await shouldReactToFileChange(file, config)
 
-			// if the file doesn't depend on $houdini, we don't need to do anything
-			const runtimeDir = path.join(config.projectRoot, config.runtimeDir ?? '$houdini')
+			// if the file doesn't depend on .houdini, we don't need to do anything
+			const runtimeDir = path.join(config.projectRoot, config.runtimeDir ?? '.houdini')
 
 			// .gql files are not understood by vite, since they're not processed yet at this stage
 			// Thus, we cannot get their dependencies.
