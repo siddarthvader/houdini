@@ -76,7 +76,7 @@ export type ServerResponse = {
 	set_header(name: string, value: string): void
 }
 
-const session_cookie_name = '__houdini__'
+export const session_cookie_name = '__houdini__'
 
 async function set_session(req: ServerHandlerArgs, response: Response, value: App.Session) {
 	const today = new Date()

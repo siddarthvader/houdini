@@ -103,15 +103,15 @@ export function serialize(
 	name: string,
 	val: string,
 	options: {
-		encode: boolean
-		maxAge: number
-		domain: string
-		path: string
-		expires: Date
-		httpOnly: boolean
-		priority: string | number
-		secure: boolean
-		sameSite: string | boolean
+		encode?: boolean
+		maxAge?: number
+		domain?: string
+		path?: string
+		expires?: Date
+		httpOnly?: boolean
+		priority?: string | number
+		secure?: boolean
+		sameSite?: string | boolean
 	}
 ): string {
 	let opt = options || {}
@@ -133,7 +133,7 @@ export function serialize(
 
 	let str = name + '=' + value
 
-	if (opt.maxAge !== null) {
+	if (opt.maxAge) {
 		let maxAge = opt.maxAge - 0
 
 		if (Number.isNaN(maxAge) || !isFinite(maxAge)) {

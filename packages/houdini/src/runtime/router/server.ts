@@ -1,11 +1,12 @@
 import { createServerAdapter as createAdapter } from '@whatwg-node/server'
-import { type GraphQLSchema, parse, execute } from 'graphql'
+import type { GraphQLSchema } from 'graphql'
 import { createYoga } from 'graphql-yoga'
 
 import type { HoudiniClient } from '../client'
 import { localApiSessionKeys, localApiEndpoint, getCurrentConfig } from '../lib/config'
+import { serialize as encodeCookie } from './cookies'
 import { find_match } from './match'
-import { get_session, handle_request } from './session'
+import { get_session, handle_request, session_cookie_name } from './session'
 import type { RouterManifest, RouterPageManifest, YogaServerOptions } from './types'
 
 // load the plugin config
@@ -43,23 +44,32 @@ export function _serverHandler<ComponentType = unknown>({
 			schema,
 			landingPage: !production,
 			graphqlEndpoint,
+			context: async (request) => await get_session(request.headers, session_keys),
 		})
 	}
 
 	client.componentCache = componentCache
 
-	// @ts-ignore: schema is defined dynamically
+	// if we have a local schema then requests to this endpoint should resolve locally using the yoga instance so we
+	// inherit any context values
 	if (schema) {
 		client.registerProxy(graphqlEndpoint, async ({ query, variables, session }) => {
-			// get the parsed query
-			const parsed = parse(query)
-
-			return await execute({
-				schema,
-				document: parsed,
-				contextValue: session,
-				variableValues: variables,
-			})
+			const response = await yoga!(
+				new Request(`http://localhost/${graphqlEndpoint}`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						Cookie: encodeCookie(session_cookie_name, JSON.stringify(session ?? {}), {
+							httpOnly: true,
+						}),
+					},
+					body: JSON.stringify({
+						query,
+						variables,
+					}),
+				})
+			)
+			return await response.json()
 		})
 	}
 
