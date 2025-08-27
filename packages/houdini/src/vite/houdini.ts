@@ -22,7 +22,7 @@ import {
 	isSecondaryBuild,
 	writeTsConfig,
 } from '../lib'
-import { isGraphQLFile, fileDependsOnHoudini, shouldReactToFileChange } from './hmr'
+import { isGraphQLFile, shouldReactToFileChange } from './hmr'
 
 let config: Config
 let viteConfig: ResolvedConfig
@@ -43,7 +43,7 @@ export default function Plugin(opts: PluginConfig = {}): VitePlugin {
 		// is processed by the user's library-specific plugins.
 		enforce: 'pre',
 
-		async hotUpdate({ file, server, modules, timestamp }): Promise<EnvironmentModuleNode[]> {
+		async hotUpdate({ file, server, modules, timestamp, read }): Promise<EnvironmentModuleNode[]> {
 			// load the config file
 			const config = await getConfig(opts)
 
@@ -53,12 +53,16 @@ export default function Plugin(opts: PluginConfig = {}): VitePlugin {
 			// if the file doesn't depend on .houdini, we don't need to do anything
 			const runtimeDir = path.join(config.projectRoot, config.runtimeDir ?? '.houdini')
 
+      // to detect if the file depends on houdini, lets just see if it contains the string
+      // this might result in false-positives but its easier than anything any else
+      const dependsOn = (await read()).includes("$houdini")
+
 			// .gql files are not understood by vite, since they're not processed yet at this stage
 			// Thus, we cannot get their dependencies.
 			// However, if it is a graphql file, it for sure depends on houdini
 			const isGqlFile = isGraphQLFile(file)
 
-			if (!(shouldReact && (fileDependsOnHoudini(modules, runtimeDir) || isGqlFile))) {
+			if (!(shouldReact && (dependsOn || isGqlFile))) {
 				return modules
 			}
 
@@ -78,8 +82,6 @@ export default function Plugin(opts: PluginConfig = {}): VitePlugin {
 			// only if not debouncing
 			let artifactStats = undefined
 			if (!lastHotUpdateEvent || timestamp !== lastHotUpdateEvent.timestamp) {
-				console.log('🎩 🔄 bundle HMR rebuild...')
-
 				try {
 					artifactStats = await generate(config)
 				} catch (e) {
@@ -95,8 +97,6 @@ export default function Plugin(opts: PluginConfig = {}): VitePlugin {
 			if (!artifactStats) {
 				return modules
 			}
-
-			console.log('🎩 ⬆️ bundle changed, triggering HMR update')
 
 			// TODO: return tainted files from generate()
 			// Instead, walk over the entire houdini directory and invalidate all modules

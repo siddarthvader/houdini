@@ -25,20 +25,3 @@ export async function shouldReactToFileChange(filepath: string, config: Config):
 	return config.includeFile(filepath, { root: process.cwd() })
 }
 
-export function fileDependsOnHoudini(
-	modules: EnvironmentModuleNode[],
-	houdiniPath: string
-): Boolean {
-	// Iterate over all the related modules of the HMR event, and get what they import
-	const fileDependencies = modules.reduce((acc, module) => {
-		module.importedModules.forEach((importedModule) => {
-			if (importedModule?.id) acc.push(importedModule.id)
-		})
-		return acc
-	}, [] as string[])
-
-	// check if any of the imported modules exist inside the houdini directory
-	return fileDependencies.some((file) => {
-		return file.startsWith(houdiniPath)
-	})
-}
