@@ -300,13 +300,7 @@ function addOverload({
 		.filter((doc) => doc.generateStore)
 		.map(
 			(doc) => `
-import type { ${importIdentifiers(doc).join(', ')} } from '${path.relative(
-				path.relative(
-					config.projectRoot,
-					path.join(config.pluginRuntimeDirectory('houdini-react'), 'hooks')
-				),
-				config.artifactImportPath(doc.name)
-			)}'
+import type { ${importIdentifiers(doc).join(', ')} } from '$houdini/artifacts/${doc.name}'
 	`
 		)
 		.join('\n')
