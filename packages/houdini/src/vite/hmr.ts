@@ -1,5 +1,4 @@
 import minimatch from 'minimatch'
-import type { EnvironmentModuleNode } from 'vite'
 
 import { path, type Config } from '../lib'
 
@@ -24,4 +23,3 @@ export async function shouldReactToFileChange(filepath: string, config: Config):
 
 	return config.includeFile(filepath, { root: process.cwd() })
 }
-
