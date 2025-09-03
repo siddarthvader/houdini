@@ -1,4 +1,5 @@
 import sqlite from 'node:sqlite'
+import path from 'path'
 
 import { PluginSpec } from './codegen'
 import { Config, default_config } from './project'
@@ -65,7 +66,7 @@ CREATE TABLE config (
     log_level TEXT CHECK (log_level IN ('QUIET', 'FULL', 'SUMMARY', 'SHORT_SUMMARY')),
     default_fragment_masking BOOLEAN,
     default_keys JSON,
-    persisted_queries_path TEXT,
+    persisted_queries_path TEXT NOT NULL,
     project_root TEXT,
     runtime_dir TEXT
 );
@@ -494,7 +495,7 @@ export async function write_config(
 		config_file.logLevel ?? null,
 		config_file.defaultFragmentMasking === 'enable' ? 1 : 0,
 		JSON.stringify(config_file.defaultKeys ?? []),
-		config_file.persistedQueriesPath ?? null,
+		config_file.persistedQueriesPath ?? path.join(config_file.runtimeDir!, 'queries.json'),
 		config.root_dir ?? null,
 		config_file.runtimeDir ?? null
 	)

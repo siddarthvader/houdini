@@ -833,7 +833,7 @@ func prepareCollectStatements(conn *sqlite.Conn, docIDs []int64) (*CollectStatem
           dct.directives,
           type_fields.type,
           st.document_id AS document_id,
-          st.hash,
+          d.hash,
           discovered_lists.name as list_name,
           discovered_lists.node_type as list_type,
           discovered_lists.connection as list_connection,
@@ -848,6 +848,7 @@ func prepareCollectStatements(conn *sqlite.Conn, docIDs []int64) (*CollectStatem
         FROM selection_refs 
           JOIN selection_tree st ON selection_refs.parent_id = st.id
           JOIN selections on selection_refs.child_id = selections.id
+          LEFT JOIN documents d ON d.id = st.document_id
 
           LEFT JOIN type_fields on selections.type = type_fields.id
           LEFT JOIN directives_agg dct ON dct.selection_id = selections.id
@@ -870,6 +871,7 @@ func prepareCollectStatements(conn *sqlite.Conn, docIDs []int64) (*CollectStatem
       document_kind, 
       type_condition, 
       selection_tree.type,
+      hash,
       list_name,
       list_type,
       list_connection,

@@ -31,7 +31,7 @@ func writeSelectionDocument(
 	sortKeys bool,
 ) error {
 	// load the project config
-	projectConfig, err := db.ProjectConfig(ctx)
+	projectConfig, _ := db.ProjectConfig(ctx)
 
 	// generate the artifact content
 	artifact, err := GenerateSelectionDocument(
@@ -65,6 +65,11 @@ func writeSelectionDocument(
 	return nil
 }
 
+type DocumentData struct {
+	Printed string
+	Hash    string
+}
+
 func GenerateSelectionDocument(
 	ctx context.Context,
 	db plugins.DatabasePool[config.PluginConfig],
@@ -82,14 +87,14 @@ func GenerateSelectionDocument(
 	// variables and added to the selection
 
 	// generate the printed value
-	printed, err := printedValue(ctx, db, conn, docs, name)
+
+	documentData, err := getDocumentData(ctx, db, conn, docs, name)
 	if err != nil {
 		return "", err
 	}
 
-	// the hash of the query is a function of the printed value
-	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(printed)))
-
+	printed := documentData.Printed
+	hash := documentData.Hash
 	// figure out the kind of the document
 	var kind string
 	switch doc.Kind {
@@ -218,7 +223,6 @@ func GenerateSelectionDocument(
 		"",
 		forceLoading,
 	)
-
 	// build up the input specification
 	inputTypes := ""
 	if len(doc.Variables) > 0 {
@@ -390,17 +394,17 @@ export default {
 	return result, nil
 }
 
-func printedValue(
+func getDocumentData(
 	ctx context.Context,
 	db plugins.DatabasePool[config.PluginConfig],
 	conn *sqlite.Conn,
 	docs *CollectedDocuments,
 	name string,
-) (string, error) {
+) (DocumentData, error) {
 	// we need to generate a printed version of the document which is just a concatenated print
 	// of the parent doc and every referenced fragment
-	printed := ""
 
+	d := DocumentData{}
 	dependentDocs := []string{}
 	for fragment := range walkReferencedDocs(docs, name) {
 		dependentDocs = append(dependentDocs, fmt.Sprintf("'%s'", fragment))
@@ -410,22 +414,25 @@ func printedValue(
 	whereIn := strings.Join(dependentDocs, ", ")
 
 	query, err := conn.Prepare(fmt.Sprintf(`
-    SELECT printed, name FROM documents WHERE name in (%s) ORDER BY name
+    SELECT printed, name, hash FROM documents WHERE name in (%s) ORDER BY name
   `, whereIn))
 	if err != nil {
-		return "", err
+		return d, err
 	}
 	defer query.Finalize()
 
 	err = db.StepStatement(ctx, query, func() {
-		printed += query.GetText("printed") + "\n\n"
+		d.Printed += query.GetText("printed") + "\n\n"
 	})
 	if err != nil {
-		return "", err
+		return d, err
 	}
-
+	
+	// compute hash based on the complete printed content (including dependencies)
+	d.Hash = fmt.Sprintf("%x", sha256.Sum256([]byte(d.Printed)))
+	
 	// we're done
-	return printed[:len(printed)-2], nil
+	return d, nil
 }
 
 func stringifySelection(

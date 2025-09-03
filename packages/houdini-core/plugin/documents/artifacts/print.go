@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"runtime"
 	"sort"
@@ -88,7 +89,7 @@ func printDocWorker(
 
 	// we need a statement to update the document
 	update, err := conn.Prepare(`
-    UPDATE documents SET printed = $printed WHERE name = $name
+    UPDATE documents SET printed = $printed, hash = $hash WHERE name = $name
   `)
 	if err != nil {
 		errChan <- plugins.WrapError(err)
@@ -108,8 +109,15 @@ func printDocWorker(
 		// print the document
 		printed := PrintCollectedDocument(doc, includeHidden)
 
-		// update the document with the printed version
-		err = db.ExecStatement(update, map[string]any{"name": doc.Name, "printed": printed})
+		// generate hash from the printed content
+		hash := generateDocumentHash(printed)
+
+		// update the document with both printed version and hash
+		err = db.ExecStatement(update, map[string]any{
+			"name": doc.Name, 
+			"printed": printed,
+			"hash": hash,
+		})
 		if err != nil {
 			errChan <- plugins.WrapError(err)
 			continue
@@ -360,3 +368,9 @@ func printValue(value *CollectedArgumentValue, usedVariables map[string]bool) st
 		return value.Raw
 	}
 }
+
+// GenerateDocumentHash creates a SHA256 hash from document content
+func generateDocumentHash(content string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+}
+
