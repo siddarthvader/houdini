@@ -3,12 +3,14 @@ package documents
 import (
 	"context"
 	"encoding/json"
+	"path"
 	"strings"
 
-	"code.houdinigraphql.com/plugins"
 	"github.com/spf13/afero"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
+
+	"code.houdinigraphql.com/plugins"
 )
 
 type OperationDoc struct {
@@ -19,7 +21,18 @@ type OperationDoc struct {
 	Printed string
 }
 
-func GeneratePersistentQueries(ctx context.Context, db plugins.DatabasePool[any], fs afero.Fs, outputPath string) error {
+func GeneratePersistentQueries(
+	ctx context.Context,
+	db plugins.DatabasePool[any],
+	fs afero.Fs,
+) error {
+	projectConfig, err := db.ProjectConfig(ctx)
+	if err != nil {
+		return err
+	}
+
+	persistedQueriesPath := projectConfig.PersistedQueriesPath
+	outputPath := path.Join(projectConfig.ProjectRoot, persistedQueriesPath)
 
 	if !strings.HasSuffix(outputPath, ".json") {
 		return &plugins.Error{
@@ -121,7 +134,6 @@ func GeneratePersistentQueries(ctx context.Context, db plugins.DatabasePool[any]
 			frag := fragments[fragmentName]
 			if frag == nil {
 				continue
-
 			}
 			fragmentDefinitions = append(fragmentDefinitions, frag.Printed)
 		}
@@ -141,7 +153,6 @@ func GeneratePersistentQueries(ctx context.Context, db plugins.DatabasePool[any]
 	if len(queryMap) == 0 {
 		return nil
 	}
-
 
 	jsonData, err := json.MarshalIndent(queryMap, "", "    ")
 	if err != nil {
