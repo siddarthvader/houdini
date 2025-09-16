@@ -2,6 +2,8 @@ package schema
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/spf13/afero"
 	"zombiezen.com/go/sqlite"
@@ -10,32 +12,224 @@ import (
 	"code.houdinigraphql.com/plugins"
 )
 
+type EnumValue struct {
+	Name   string
+	Values []string
+}
+
+// checks if a type is a built-in GraphQL scalar
+func isBuiltInScalar(typeName string) bool {
+	builtInScalars := map[string]bool{
+		"String":  true,
+		"Boolean": true,
+		"Int":     true,
+		"Float":   true,
+		"ID":      true,
+	}
+	return builtInScalars[typeName]
+}
+
 func GenerateDefinitionFiles(
 	ctx context.Context,
 	db plugins.DatabasePool[config.PluginConfig],
 	fs afero.Fs,
 	sortKeys bool,
 ) error {
-	// a query to look for enums that are defined
-	enumSearch := `
-    SELECT * FROM enum_values ON types where enum_values.parent = types.name
-  `
-
-	// collect all of the results
-	type CollectedEnum struct {
-		Name     string
-		Internal bool
-		Values   []string
+	projectConfig, err := db.ProjectConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get project config: %w", err)
 	}
-	enumMap := map[string]CollectedEnum{}
 
-	err := db.StepQuery(ctx, enumSearch, map[string]any{}, func(q *sqlite.Stmt) {
-		enumName := q.GetText("parent")
-	})
+	// 1. Generate schema.graphql
+	err = generateSchemaFile(ctx, db, fs, projectConfig)
 	if err != nil {
 		return err
 	}
 
-	// we're done
+	// 2. Generate documents.gql with list fragments
+	err = generateDocumentsFile(ctx, db, fs, projectConfig)
+	if err != nil {
+		return err
+	}
+
+	// 3. Generate enum files (enums.js, enums.d.ts, index files)
+	err = generateEnumFiles(ctx, db, fs, projectConfig)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type Directive struct {
+	Name        string
+	Internal    bool
+	Repeatable  bool
+	Description string
+	Arguments   []*Argument
+	Locations   []string
+}
+
+type Argument struct {
+	Name          string
+	Type          string
+	TypeModifiers string
+	DefaultValue  string
+}
+
+func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
+	directives := make(map[string]*Directive)
+	errs := &plugins.ErrorList{}
+	customTypes := make(map[string]bool) // Collect custom enum types
+
+	var schemaString strings.Builder
+	// get all internal directives
+	err := db.StepQuery(ctx, `
+		SELECT name, internal, repeatable, description
+		FROM directives
+		WHERE internal = 1
+	`, nil, func(stmt *sqlite.Stmt) {
+		name := stmt.ColumnText(0)
+		internal := stmt.ColumnInt(1) == 1
+		repeatable := stmt.ColumnInt(2) == 1
+		description := stmt.ColumnText(3)
+
+		// create directive struct to collect data
+		directive := &Directive{
+			Name:        name,
+			Internal:    internal,
+			Repeatable:  repeatable,
+			Description: description,
+			Arguments:   []*Argument{},
+			Locations:   []string{},
+		}
+		directives[name] = directive
+
+		// collect arguments first
+		argErr := db.StepQuery(ctx, `
+				SELECT name, type, type_modifiers, default_value
+				FROM directive_arguments
+				WHERE parent = $directive
+			`, map[string]any{"directive": name}, func(stmt *sqlite.Stmt) {
+			arg := &Argument{
+				Name:          stmt.ColumnText(0),
+				Type:          stmt.ColumnText(1),
+				TypeModifiers: stmt.ColumnText(2),
+				DefaultValue:  stmt.ColumnText(3),
+			}
+			directive.Arguments = append(directive.Arguments, arg)
+
+			// collect custom types (skip built-in GraphQL scalars)
+			if !isBuiltInScalar(arg.Type) {
+				customTypes[arg.Type] = true
+			}
+		})
+		if argErr != nil {
+			errs.Append(plugins.WrapError(argErr))
+			return
+		}
+
+		// collect locations
+		locErr := db.StepQuery(ctx, `
+				SELECT location
+				FROM directive_locations
+				WHERE directive = $directive
+			`, map[string]any{"directive": name}, func(stmt *sqlite.Stmt) {
+			location := stmt.ColumnText(0)
+			directive.Locations = append(directive.Locations, location)
+		})
+		if locErr != nil {
+			errs.Append(plugins.WrapError(locErr))
+			return
+		}
+
+		if description != "" && description != "null" {
+			// writing the desc as a comment
+			schemaString.WriteString(fmt.Sprintf("\"\"\"%s\"\"\"\n", description))
+		}
+
+		schemaString.WriteString(fmt.Sprintf("directive @%s", name))
+
+		// arguments in parentheses
+		if len(directive.Arguments) > 0 {
+			schemaString.WriteString("(")
+			for i, arg := range directive.Arguments {
+				if i > 0 {
+					schemaString.WriteString(", ")
+				}
+				schemaString.WriteString(fmt.Sprintf("%s: %s%s", arg.Name, arg.Type, arg.TypeModifiers))
+			}
+			schemaString.WriteString(")")
+
+			// add repeatable keyword
+			if repeatable {
+				schemaString.WriteString(" repeatable")
+			}
+
+			// ddd locations
+			schemaString.WriteString(" on ")
+			schemaString.WriteString(strings.Join(directive.Locations, " | "))
+
+		}
+
+		schemaString.WriteString("\n\n")
+
+	})
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	if errs.Error() != "" {
+		return errs
+	}
+
+	// writing enum definitions for custom types referenced by directive arguments at the end of the file
+	for typeName := range customTypes {
+		enumValues := []string{}
+
+		// query enum values for this type
+		enumErr := db.StepQuery(ctx, `
+			SELECT value
+			FROM enum_values
+			WHERE parent = $typeName
+			ORDER BY value
+		`, map[string]any{"typeName": typeName}, func(stmt *sqlite.Stmt) {
+			value := stmt.ColumnText(0)
+			enumValues = append(enumValues, value)
+		})
+
+		if enumErr != nil {
+			errs.Append(plugins.WrapError(enumErr))
+			continue
+		}
+
+		//if we found enum values, write the enum definition
+		if len(enumValues) > 0 {
+			schemaString.WriteString(fmt.Sprintf("enum %s {\n", typeName))
+			for _, value := range enumValues {
+				schemaString.WriteString(fmt.Sprintf("  %s\n", value))
+			}
+			schemaString.WriteString("}\n\n")
+		}
+	}
+
+	schemaFileLocation := projectConfig.DefinitionsSchemaPath()
+	if schemaFileLocation == "" {
+		return fmt.Errorf("schema file location not found in project config")
+	}
+
+	err = afero.WriteFile(fs, schemaFileLocation, []byte(schemaString.String()), 0644)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+	return nil
+
+}
+
+func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
+	return nil
+}
+
+func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
 	return nil
 }

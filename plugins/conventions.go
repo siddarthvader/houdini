@@ -17,6 +17,14 @@ func (c ProjectConfig) DefinitionsEnumTypes() string {
 	return path.Join(c.DefinitionsDirectory(), "enums.d.ts")
 }
 
+func (c ProjectConfig) DefinitionsSchemaPath() string {
+	return path.Join(c.DefinitionsDirectory(), "schema.graphql")
+}
+
+func (c ProjectConfig) DefinitionsDocumentsPath() string {
+	return path.Join(c.DefinitionsDirectory(), "documents.gql")
+}
+
 func (c ProjectConfig) ArtifactDirectory() string {
 	return path.Join(
 		c.ProjectRoot,
