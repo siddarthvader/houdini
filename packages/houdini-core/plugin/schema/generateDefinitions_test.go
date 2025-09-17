@@ -2,6 +2,7 @@ package schema_test
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,9 +19,6 @@ import (
 func TestDefinitionGeneration(t *testing.T) {
 	tests.RunTable(t, tests.Table[config.PluginConfig]{
 		Tests: []tests.Test[config.PluginConfig]{
-			{
-				Name: "Generates runtime definitions for each enum",
-			},
 			{
 				Name: "Generates schema.graphql with internal directives",
 				Input: []string{
@@ -52,6 +50,12 @@ func TestDefinitionGeneration(t *testing.T) {
 			},
 			{
 				Name: "Generates enums.js with correct format",
+				Input: []string{
+					`query TestQuery { version }`,
+				},
+			},
+			{
+				Name: "Generates enums.d.ts with TypeScript definitions",
 				Input: []string{
 					`query TestQuery { version }`,
 				},
@@ -387,6 +391,85 @@ func TestDefinitionGeneration(t *testing.T) {
 				operationPos := strings.Index(enumsStr, `"Operation"`)
 				variablesPos := strings.Index(enumsStr, `"Variables"`)
 				assert.True(t, nonePos < operationPos && operationPos < variablesPos, "DedupeMatchMode values should be sorted alphabetically")
+
+				// Test enums.d.ts generation
+				enumsTypesContent, err := afero.ReadFile(
+					p.Fs,
+					projectConfig.DefinitionsEnumTypes(),
+				)
+				assert.Nil(t, err)
+
+				enumsTypesStr := string(enumsTypesContent)
+
+				// Check for ValuesOf helper type at the top
+				assert.Contains(t, enumsTypesStr, "type ValuesOf<T> = T[keyof T]")
+
+				// Check for TypeScript declarations
+				assert.Contains(t, enumsTypesStr, "export declare const DedupeMatchMode: {")
+				assert.Contains(t, enumsTypesStr, "readonly Variables: \"Variables\";")
+				assert.Contains(t, enumsTypesStr, "readonly Operation: \"Operation\";")
+				assert.Contains(t, enumsTypesStr, "readonly None: \"None\";")
+
+				// Check for type aliases
+				assert.Contains(t, enumsTypesStr, "export type DedupeMatchMode$options = ValuesOf<typeof DedupeMatchMode>")
+
+				// Verify alphabetical sorting in TypeScript too
+				tsNonePos := strings.Index(enumsTypesStr, "readonly None:")
+				tsOperationPos := strings.Index(enumsTypesStr, "readonly Operation:")
+				tsVariablesPos := strings.Index(enumsTypesStr, "readonly Variables:")
+				assert.True(t, tsNonePos < tsOperationPos && tsOperationPos < tsVariablesPos, "TypeScript enum values should be sorted alphabetically")
+
+			case "Generates enums.d.ts with TypeScript definitions":
+				// Run the complete pipeline
+				err = p.AfterExtract(context.Background())
+				assert.Nil(t, err)
+
+				err = p.Validate(context.Background())
+				assert.Nil(t, err)
+
+				err = p.AfterValidate(context.Background())
+				assert.Nil(t, err)
+
+				// Get updated project config
+				projectConfig, err := p.DB.ProjectConfig(context.Background())
+				require.Nil(t, err)
+
+				// Call schema generation directly
+				err = schema.GenerateDefinitionFiles(context.Background(), p.DB, p.Fs, false)
+				assert.Nil(t, err)
+
+				// Test only the .d.ts file
+				enumsTypesContent, err := afero.ReadFile(
+					p.Fs,
+					projectConfig.DefinitionsEnumTypes(),
+				)
+				assert.Nil(t, err)
+
+				enumsTypesStr := string(enumsTypesContent)
+
+				// Check structure matches TypeScript test expectations
+				assert.Contains(t, enumsTypesStr, "type ValuesOf<T> = T[keyof T]")
+				assert.Contains(t, enumsTypesStr, "export declare const DedupeMatchMode: {")
+				assert.Contains(t, enumsTypesStr, "readonly Variables: \"Variables\";")
+				assert.Contains(t, enumsTypesStr, "readonly Operation: \"Operation\";")
+				assert.Contains(t, enumsTypesStr, "readonly None: \"None\";")
+				assert.Contains(t, enumsTypesStr, "}")
+				assert.Contains(t, enumsTypesStr, "export type DedupeMatchMode$options = ValuesOf<typeof DedupeMatchMode>")
+
+				// Verify no JavaScript syntax in TypeScript file
+				assert.NotContains(t, enumsTypesStr, "export const")
+				assert.NotContains(t, enumsTypesStr, "};")
+
+				// Test index files generation
+				indexJsLocation := filepath.Join(filepath.Dir(projectConfig.DefinitionsEnumRuntime()), "index.js")
+				indexJsContent, err := afero.ReadFile(p.Fs, indexJsLocation)
+				assert.Nil(t, err)
+				assert.Contains(t, string(indexJsContent), "export * from './enums.js'")
+
+				indexDtsLocation := filepath.Join(filepath.Dir(projectConfig.DefinitionsEnumTypes()), "index.d.ts")
+				indexDtsContent, err := afero.ReadFile(p.Fs, indexDtsLocation)
+				assert.Nil(t, err)
+				assert.Contains(t, string(indexDtsContent), "export * from './enums.js'")
 			}
 		},
 	})

@@ -260,6 +260,8 @@ func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.P
 func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
 	var enumString strings.Builder
 
+
+	// just joining the tables and getting the exact js enum out of it using group_concat and sql templating
 	err := db.StepQuery(ctx, `
 		SELECT t.name,
 		       'export const ' || t.name || ' = {' || char(10) ||
@@ -291,6 +293,66 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 	}
 
 	err = afero.WriteFile(fs, enumsFileLocation, []byte(enumString.String()), 0644)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	// now we want to generate enums.d.ts file
+	var tsEnumString strings.Builder
+
+	// add the ValuesOf helper type at the top
+	tsEnumString.WriteString("type ValuesOf<T> = T[keyof T]\n\t\n")
+
+	err = db.StepQuery(ctx, `
+		SELECT t.name,
+		       'export declare const ' || t.name || ': {' || char(10) ||
+		       '    ' || GROUP_CONCAT('readonly ' || ev.value || ': "' || ev.value || '";', char(10) || '    ' ORDER BY ev.value) ||
+		       char(10) || '}' || char(10) || char(10) ||
+		       'export type ' || t.name || '$options = ValuesOf<typeof ' || t.name || '>' || char(10) || ' ' || char(10) as ts_enum_definition
+		FROM types t
+		JOIN enum_values ev ON ev.parent = t.name
+		WHERE t.built_in = 0
+		GROUP BY t.name
+		ORDER BY t.name
+	`, nil, func(stmt *sqlite.Stmt) {
+		tsEnumDefinition := stmt.ColumnText(1)
+		tsEnumString.WriteString(tsEnumDefinition)
+	})
+
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	enumsTypesFileLocation := projectConfig.DefinitionsEnumTypes()
+	if enumsTypesFileLocation == "" {
+		return fmt.Errorf("enums types file location not found in project config")
+	}
+
+	tsDir := filepath.Dir(enumsTypesFileLocation)
+	err = fs.MkdirAll(tsDir, 0755)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	err = afero.WriteFile(fs, enumsTypesFileLocation, []byte(tsEnumString.String()), 0644)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	// generate index.js file
+	indexJsContent := "\nexport * from './enums.js'\n\t\n"
+	indexJsLocation := filepath.Join(filepath.Dir(enumsFileLocation), "index.js")
+
+	err = afero.WriteFile(fs, indexJsLocation, []byte(indexJsContent), 0644)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	// generate index.d.ts file
+	indexDtsContent := "\nexport * from './enums.js'\n\t\n"
+	indexDtsLocation := filepath.Join(filepath.Dir(enumsTypesFileLocation), "index.d.ts")
+
+	err = afero.WriteFile(fs, indexDtsLocation, []byte(indexDtsContent), 0644)
 	if err != nil {
 		return plugins.WrapError(err)
 	}
