@@ -50,6 +50,12 @@ func TestDefinitionGeneration(t *testing.T) {
 					`fragment TestFragment on User { firstName }`,
 				},
 			},
+			{
+				Name: "Generates enums.js with correct format",
+				Input: []string{
+					`query TestQuery { version }`,
+				},
+			},
 		},
 		Schema: `
 			type Query {
@@ -326,6 +332,61 @@ func TestDefinitionGeneration(t *testing.T) {
 				// Count occurrences of a directive to ensure no duplicates
 				listDirectiveCount := strings.Count(schemaStr, "directive @list")
 				assert.Equal(t, 1, listDirectiveCount, "directive @list should appear exactly once")
+
+			case "Generates enums.js with correct format":
+				// Run the complete pipeline
+				err = p.AfterExtract(context.Background())
+				assert.Nil(t, err)
+
+				err = p.Validate(context.Background())
+				assert.Nil(t, err)
+
+				err = p.AfterValidate(context.Background())
+				assert.Nil(t, err)
+
+				// Get updated project config
+				projectConfig, err := p.DB.ProjectConfig(context.Background())
+				require.Nil(t, err)
+
+				// Call schema generation directly
+				err = schema.GenerateDefinitionFiles(context.Background(), p.DB, p.Fs, false)
+				assert.Nil(t, err)
+
+				// Test enums.js generation
+				enumsContent, err := afero.ReadFile(
+					p.Fs,
+					projectConfig.DefinitionsEnumRuntime(),
+				)
+				assert.Nil(t, err)
+
+				enumsStr := string(enumsContent)
+
+				// Check for built-in enums that should always be present
+				assert.Contains(t, enumsStr, "export const DedupeMatchMode = {")
+				assert.Contains(t, enumsStr, `"Variables": "Variables"`)
+				assert.Contains(t, enumsStr, `"Operation": "Operation"`)
+				assert.Contains(t, enumsStr, `"None": "None"`)
+
+				// Check for test enums from schema if they exist in database
+				if strings.Contains(enumsStr, "TestEnum1") {
+					assert.Contains(t, enumsStr, "export const TestEnum1 = {")
+					assert.Contains(t, enumsStr, `"Value1": "Value1"`)
+					assert.Contains(t, enumsStr, `"Value2": "Value2"`)
+				}
+
+				if strings.Contains(enumsStr, "TestEnum2") {
+					assert.Contains(t, enumsStr, "export const TestEnum2 = {")
+					assert.Contains(t, enumsStr, `"Value3": "Value3"`)
+				}
+
+				// Check closing brace and semicolon format
+				assert.Contains(t, enumsStr, "};")
+
+				// Verify DedupeMatchMode values are sorted alphabetically
+				nonePos := strings.Index(enumsStr, `"None"`)
+				operationPos := strings.Index(enumsStr, `"Operation"`)
+				variablesPos := strings.Index(enumsStr, `"Variables"`)
+				assert.True(t, nonePos < operationPos && operationPos < variablesPos, "DedupeMatchMode values should be sorted alphabetically")
 			}
 		},
 	})
