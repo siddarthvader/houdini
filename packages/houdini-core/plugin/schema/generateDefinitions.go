@@ -64,7 +64,7 @@ func GenerateDefinitionFiles(
 func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
 	directives := make(map[string]*Directive)
 	errs := &plugins.ErrorList{}
-	customTypes := make(map[string]bool) // Collect custom enum types
+	customTypes := make(map[string]bool)
 
 	var schemaString strings.Builder
 	// get all internal directives
@@ -219,10 +219,82 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 }
 
 func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
+
+	// get all documents from docuemnt table joined with discovered list and that are fragments
+	var documentString strings.Builder
+
+	err := db.StepQuery(ctx, `
+		SELECT d.printed
+		FROM discovered_lists dl
+		JOIN documents d ON dl.raw_document = d.raw_document
+		WHERE d.kind = 'fragment'
+	`, nil, func(stmt *sqlite.Stmt) {
+		printed := stmt.ColumnText(0)
+		documentString.WriteString(printed)
+		documentString.WriteString("\n\n")
+	})
+
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	documentsFileLocation := projectConfig.DefinitionsDocumentsPath()
+	if documentsFileLocation == "" {
+		return fmt.Errorf("documents file location not found in project config")
+	}
+
+	// Ensure the directory exists before writing the file
+	dir := filepath.Dir(documentsFileLocation)
+	err = fs.MkdirAll(dir, 0755)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	err = afero.WriteFile(fs, documentsFileLocation, []byte(documentString.String()), 0644)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
 	return nil
 }
 
 func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
+	var enumString strings.Builder
+
+	err := db.StepQuery(ctx, `
+		SELECT t.name,
+		       'export const ' || t.name || ' = {' || char(10) ||
+		       '    ' || GROUP_CONCAT('"' || ev.value || '": "' || ev.value || '"', ',' || char(10) || '    ' ORDER BY ev.value) ||
+		       char(10) || '};' || char(10) || char(10) as enum_definition
+		FROM types t
+		JOIN enum_values ev ON ev.parent = t.name
+		WHERE t.built_in = 0
+		GROUP BY t.name
+		ORDER BY t.name
+	`, nil, func(stmt *sqlite.Stmt) {
+		enumDefinition := stmt.ColumnText(1)
+		enumString.WriteString(enumDefinition)
+	})
+
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	enumsFileLocation := projectConfig.DefinitionsEnumRuntime()
+	if enumsFileLocation == "" {
+		return fmt.Errorf("enums file location not found in project config")
+	}
+
+	dir := filepath.Dir(enumsFileLocation)
+	err = fs.MkdirAll(dir, 0755)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	err = afero.WriteFile(fs, enumsFileLocation, []byte(enumString.String()), 0644)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
 	return nil
 }
 

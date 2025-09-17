@@ -2,6 +2,7 @@ package schema_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -27,17 +28,55 @@ func TestDefinitionGeneration(t *testing.T) {
 					`fragment UserInfo on User @list(name: "User_List") { id name email }`,
 				},
 			},
+			{
+				Name: "Generates documents.gql with list fragments",
+				Input: []string{
+					`query TestQuery { usersByCursor @list(name: "Friends") { edges { node { id } } } }`,
+					`fragment TestFragment on User { firstName }`,
+				},
+			},
+			{
+				Name: "Generates documents.gql with custom ID list fragments",
+				Input: []string{
+					`query TestQuery { usersByCursor @list(name: "Friends") { edges { node { id } } } }`,
+					`fragment TestFragment on User { firstName }`,
+					`query CustomIdList { customIdList @list(name: "theList") { foo } }`,
+				},
+			},
+			{
+				Name: "Writing twice doesn't duplicate definitions",
+				Input: []string{
+					`query TestQuery { version }`,
+					`fragment TestFragment on User { firstName }`,
+				},
+			},
 		},
 		Schema: `
 			type Query {
 				allUsers: [User!]!
+				usersByCursor: UserConnection!
+				customIdList: [CustomIdType!]!
 				version: Int!
+			}
+
+			type UserConnection {
+				edges: [UserEdge!]!
+			}
+
+			type UserEdge {
+				node: User!
 			}
 
 			type User {
 				id: ID!
 				name: String!
 				email: String!
+				firstName: String!
+			}
+
+			type CustomIdType {
+				foo: String!
+				bar: String!
 			}
 
 			"""
@@ -182,6 +221,111 @@ func TestDefinitionGeneration(t *testing.T) {
 				assert.Contains(t, schemaStr, "CacheAndNetwork")
 				assert.Contains(t, schemaStr, "Infinite")
 				assert.Contains(t, schemaStr, "Variables")
+
+			case "Generates documents.gql with list fragments":
+				// Run the complete pipeline
+				err = p.AfterExtract(context.Background())
+				assert.Nil(t, err)
+
+				err = p.Validate(context.Background())
+				assert.Nil(t, err)
+
+				err = p.AfterValidate(context.Background())
+				assert.Nil(t, err)
+
+				// Get updated project config
+				projectConfig, err := p.DB.ProjectConfig(context.Background())
+				require.Nil(t, err)
+
+				// Call schema generation directly
+				err = schema.GenerateDefinitionFiles(context.Background(), p.DB, p.Fs, false)
+				assert.Nil(t, err)
+
+				// Test documents.gql generation
+				documentsContent, err := afero.ReadFile(
+					p.Fs,
+					projectConfig.DefinitionsDocumentsPath(),
+				)
+				assert.Nil(t, err)
+
+				documentsStr := string(documentsContent)
+
+				// Check for expected fragments
+				assert.Contains(t, documentsStr, "fragment Friends_insert on User")
+				assert.Contains(t, documentsStr, "fragment Friends_toggle on User")
+				assert.Contains(t, documentsStr, "fragment Friends_remove on User")
+
+			case "Generates documents.gql with custom ID list fragments":
+				// Run the complete pipeline
+				err = p.AfterExtract(context.Background())
+				assert.Nil(t, err)
+
+				err = p.Validate(context.Background())
+				assert.Nil(t, err)
+
+				err = p.AfterValidate(context.Background())
+				assert.Nil(t, err)
+
+				// Get updated project config
+				projectConfig, err := p.DB.ProjectConfig(context.Background())
+				require.Nil(t, err)
+
+				// Call schema generation directly
+				err = schema.GenerateDefinitionFiles(context.Background(), p.DB, p.Fs, false)
+				assert.Nil(t, err)
+
+				// Test documents.gql generation
+				documentsContent, err := afero.ReadFile(
+					p.Fs,
+					projectConfig.DefinitionsDocumentsPath(),
+				)
+				assert.Nil(t, err)
+
+				documentsStr := string(documentsContent)
+
+				// Check for Friends fragments
+				assert.Contains(t, documentsStr, "fragment Friends_insert on User")
+				assert.Contains(t, documentsStr, "fragment Friends_toggle on User")
+				assert.Contains(t, documentsStr, "fragment Friends_remove on User")
+
+				// Check for theList fragments
+				assert.Contains(t, documentsStr, "fragment theList_insert on CustomIdType")
+				assert.Contains(t, documentsStr, "fragment theList_toggle on CustomIdType")
+				assert.Contains(t, documentsStr, "fragment theList_remove on CustomIdType")
+
+			case "Writing twice doesn't duplicate definitions":
+				// Run the complete pipeline twice
+				for i := 0; i < 2; i++ {
+					err = p.AfterExtract(context.Background())
+					assert.Nil(t, err)
+
+					err = p.Validate(context.Background())
+					assert.Nil(t, err)
+
+					err = p.AfterValidate(context.Background())
+					assert.Nil(t, err)
+
+					// Call schema generation directly
+					err = schema.GenerateDefinitionFiles(context.Background(), p.DB, p.Fs, false)
+					assert.Nil(t, err)
+				}
+
+				// Get updated project config
+				projectConfig, err := p.DB.ProjectConfig(context.Background())
+				require.Nil(t, err)
+
+				// Test schema.graphql doesn't have duplicates
+				schemaContent, err := afero.ReadFile(
+					p.Fs,
+					projectConfig.DefinitionsSchemaPath(),
+				)
+				assert.Nil(t, err)
+
+				schemaStr := string(schemaContent)
+
+				// Count occurrences of a directive to ensure no duplicates
+				listDirectiveCount := strings.Count(schemaStr, "directive @list")
+				assert.Equal(t, 1, listDirectiveCount, "directive @list should appear exactly once")
 			}
 		},
 	})
