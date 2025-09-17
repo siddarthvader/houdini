@@ -2,7 +2,6 @@ package schema_test
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -411,13 +410,11 @@ func TestDefinitionGeneration(t *testing.T) {
 				assert.NotContains(t, enumsTypesStr, "};")
 
 				// Test index files generation
-				indexJsLocation := filepath.Join(filepath.Dir(projectConfig.DefinitionsEnumRuntime()), "index.js")
-				indexJsContent, err := afero.ReadFile(p.Fs, indexJsLocation)
+				indexJsContent, err := afero.ReadFile(p.Fs, projectConfig.DefinitionsIndexJs())
 				assert.Nil(t, err)
 				assert.Contains(t, string(indexJsContent), "export * from './enums.js'")
 
-				indexDtsLocation := filepath.Join(filepath.Dir(projectConfig.DefinitionsEnumTypes()), "index.d.ts")
-				indexDtsContent, err := afero.ReadFile(p.Fs, indexDtsLocation)
+				indexDtsContent, err := afero.ReadFile(p.Fs, projectConfig.DefinitionsIndexDts())
 				assert.Nil(t, err)
 				assert.Contains(t, string(indexDtsContent), "export * from './enums.js'")
 			}

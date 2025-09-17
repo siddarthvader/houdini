@@ -199,9 +199,6 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 	}
 
 	schemaFileLocation := projectConfig.DefinitionsSchemaPath()
-	if schemaFileLocation == "" {
-		return fmt.Errorf("schema file location not found in project config")
-	}
 
 	// Ensure the directory exists before writing the file
 	dir := filepath.Dir(schemaFileLocation)
@@ -239,9 +236,6 @@ func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.P
 	}
 
 	documentsFileLocation := projectConfig.DefinitionsDocumentsPath()
-	if documentsFileLocation == "" {
-		return fmt.Errorf("documents file location not found in project config")
-	}
 
 	// Ensure the directory exists before writing the file
 	dir := filepath.Dir(documentsFileLocation)
@@ -282,9 +276,6 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 	}
 
 	enumsFileLocation := projectConfig.DefinitionsEnumRuntime()
-	if enumsFileLocation == "" {
-		return fmt.Errorf("enums file location not found in project config")
-	}
 
 	dir := filepath.Dir(enumsFileLocation)
 	err = fs.MkdirAll(dir, 0755)
@@ -324,9 +315,6 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 	}
 
 	enumsTypesFileLocation := projectConfig.DefinitionsEnumTypes()
-	if enumsTypesFileLocation == "" {
-		return fmt.Errorf("enums types file location not found in project config")
-	}
 
 	tsDir := filepath.Dir(enumsTypesFileLocation)
 	err = fs.MkdirAll(tsDir, 0755)
@@ -341,7 +329,7 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 
 	// generate index.js file
 	indexJsContent := "\nexport * from './enums.js'\n\t\n"
-	indexJsLocation := filepath.Join(filepath.Dir(enumsFileLocation), "index.js")
+	indexJsLocation := projectConfig.DefinitionsIndexJs()
 
 	err = afero.WriteFile(fs, indexJsLocation, []byte(indexJsContent), 0644)
 	if err != nil {
@@ -350,7 +338,7 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 
 	// generate index.d.ts file
 	indexDtsContent := "\nexport * from './enums.js'\n\t\n"
-	indexDtsLocation := filepath.Join(filepath.Dir(enumsTypesFileLocation), "index.d.ts")
+	indexDtsLocation := projectConfig.DefinitionsIndexDts()
 
 	err = afero.WriteFile(fs, indexDtsLocation, []byte(indexDtsContent), 0644)
 	if err != nil {
