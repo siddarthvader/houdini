@@ -3,6 +3,7 @@ package schema
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/afero"
@@ -11,55 +12,6 @@ import (
 	"code.houdinigraphql.com/packages/houdini-core/config"
 	"code.houdinigraphql.com/plugins"
 )
-
-type EnumValue struct {
-	Name   string
-	Values []string
-}
-
-// checks if a type is a built-in GraphQL scalar
-func isBuiltInScalar(typeName string) bool {
-	builtInScalars := map[string]bool{
-		"String":  true,
-		"Boolean": true,
-		"Int":     true,
-		"Float":   true,
-		"ID":      true,
-	}
-	return builtInScalars[typeName]
-}
-
-func GenerateDefinitionFiles(
-	ctx context.Context,
-	db plugins.DatabasePool[config.PluginConfig],
-	fs afero.Fs,
-	sortKeys bool,
-) error {
-	projectConfig, err := db.ProjectConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get project config: %w", err)
-	}
-
-	// 1. Generate schema.graphql
-	err = generateSchemaFile(ctx, db, fs, projectConfig)
-	if err != nil {
-		return err
-	}
-
-	// 2. Generate documents.gql with list fragments
-	err = generateDocumentsFile(ctx, db, fs, projectConfig)
-	if err != nil {
-		return err
-	}
-
-	// 3. Generate enum files (enums.js, enums.d.ts, index files)
-	err = generateEnumFiles(ctx, db, fs, projectConfig)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
 
 type Directive struct {
 	Name        string
@@ -75,6 +27,38 @@ type Argument struct {
 	Type          string
 	TypeModifiers string
 	DefaultValue  string
+}
+
+func GenerateDefinitionFiles(
+	ctx context.Context,
+	db plugins.DatabasePool[config.PluginConfig],
+	fs afero.Fs,
+	sortKeys bool,
+) error {
+	projectConfig, err := db.ProjectConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get project config: %w", err)
+	}
+
+	// generate schema.graphql
+	err = generateSchemaFile(ctx, db, fs, projectConfig)
+	if err != nil {
+		return err
+	}
+
+	// generate documents.gql
+	err = generateDocumentsFile(ctx, db, fs, projectConfig)
+	if err != nil {
+		return err
+	}
+
+	// generate enum files (enums.js, enums.d.ts, index files)
+	err = generateEnumFiles(ctx, db, fs, projectConfig)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
@@ -184,6 +168,7 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 	}
 
 	// writing enum definitions for custom types referenced by directive arguments at the end of the file
+	// writing at the end of the file(schema.graphql) cost us one more loop but it is cleaner
 	for typeName := range customTypes {
 		enumValues := []string{}
 
@@ -218,6 +203,13 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 		return fmt.Errorf("schema file location not found in project config")
 	}
 
+	// Ensure the directory exists before writing the file
+	dir := filepath.Dir(schemaFileLocation)
+	err = fs.MkdirAll(dir, 0755)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
 	err = afero.WriteFile(fs, schemaFileLocation, []byte(schemaString.String()), 0644)
 	if err != nil {
 		return plugins.WrapError(err)
@@ -232,4 +224,16 @@ func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.P
 
 func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
 	return nil
+}
+
+// helper functions
+func isBuiltInScalar(typeName string) bool {
+	builtInScalars := map[string]bool{
+		"String":  true,
+		"Boolean": true,
+		"Int":     true,
+		"Float":   true,
+		"ID":      true,
+	}
+	return builtInScalars[typeName]
 }
