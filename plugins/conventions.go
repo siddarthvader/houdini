@@ -47,3 +47,10 @@ func (c ProjectConfig) ArtifactPath(name string) string {
 		name+".js",
 	)
 }
+
+func (c ProjectConfig) ArtifactTypePath(name string) string {
+	return path.Join(
+		c.ArtifactDirectory(),
+		name+".d.ts",
+	)
+}

@@ -87,7 +87,7 @@ func GenerateDocumentArtifacts(
 				}
 
 				// generate the artifacts for this document
-				err = generateTypescriptDefinition(collectedDefinitions, name, selection)
+				err = generateTypescriptDefinition(ctx, fs, db, collectedDefinitions, name, selection)
 				if err != nil {
 					errs.Append(plugins.WrapError(err))
 					continue
