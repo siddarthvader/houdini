@@ -29,6 +29,11 @@ type Argument struct {
 	DefaultValue  string
 }
 
+type EnumData struct {
+	Name   string
+	Values []string
+}
+
 func GenerateDefinitionFiles(
 	ctx context.Context,
 	db plugins.DatabasePool[config.PluginConfig],
@@ -200,7 +205,6 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 
 	schemaFileLocation := projectConfig.DefinitionsSchemaPath()
 
-	// Ensure the directory exists before writing the file
 	dir := filepath.Dir(schemaFileLocation)
 	err = fs.MkdirAll(dir, 0755)
 	if err != nil {
@@ -237,7 +241,6 @@ func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.P
 
 	documentsFileLocation := projectConfig.DefinitionsDocumentsPath()
 
-	// Ensure the directory exists before writing the file
 	dir := filepath.Dir(documentsFileLocation)
 	err = fs.MkdirAll(dir, 0755)
 	if err != nil {
@@ -250,34 +253,60 @@ func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.P
 	}
 	return nil
 }
-
 func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
-	var enumString strings.Builder
+	// collect all enum data from database
+	enums := []EnumData{}
+	errs := &plugins.ErrorList{}
 
-
-	// just joining the tables and getting the exact js enum out of it using group_concat and sql templating
+	// all enum types and their values using simple queries
 	err := db.StepQuery(ctx, `
-		SELECT t.name,
-		       'export const ' || t.name || ' = {' || char(10) ||
-		       '    ' || GROUP_CONCAT('"' || ev.value || '": "' || ev.value || '"', ',' || char(10) || '    ' ORDER BY ev.value) ||
-		       char(10) || '};' || char(10) || char(10) as enum_definition
+		SELECT t.name
 		FROM types t
-		JOIN enum_values ev ON ev.parent = t.name
 		WHERE t.built_in = 0
-		GROUP BY t.name
 		ORDER BY t.name
 	`, nil, func(stmt *sqlite.Stmt) {
-		enumDefinition := stmt.ColumnText(1)
-		enumString.WriteString(enumDefinition)
+		enumName := stmt.ColumnText(0)
+		enum := EnumData{
+			Name:   enumName,
+			Values: []string{},
+		}
+
+		// all values for this enum
+		valueErr := db.StepQuery(ctx, `
+			SELECT value
+			FROM enum_values
+			WHERE parent = $enumName
+			ORDER BY value
+		`, map[string]any{"enumName": enumName}, func(valueStmt *sqlite.Stmt) {
+			value := valueStmt.ColumnText(0)
+			enum.Values = append(enum.Values, value)
+		})
+
+		if valueErr != nil {
+			errs.Append(plugins.WrapError(valueErr))
+			return
+		}
+
+		enums = append(enums, enum)
 	})
 
 	if err != nil {
 		return plugins.WrapError(err)
 	}
 
-	enumsFileLocation := projectConfig.DefinitionsEnumRuntime()
+	if errs.Error() != "" {
+		return errs
+	}
 
+	var enumString strings.Builder
+	for _, enum := range enums {
+		enumString.WriteString(generateJSEnumDefinition(enum))
+	}
+
+	// writing enums.js
+	enumsFileLocation := projectConfig.DefinitionsEnumRuntime()
 	dir := filepath.Dir(enumsFileLocation)
+
 	err = fs.MkdirAll(dir, 0755)
 	if err != nil {
 		return plugins.WrapError(err)
@@ -288,34 +317,16 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 		return plugins.WrapError(err)
 	}
 
-	// now we want to generate enums.d.ts file
+	// ts enum definitions using template strings
 	var tsEnumString strings.Builder
+	tsEnumString.WriteString("type ValuesOf<T> = T[keyof T]\n\n")
 
-	// add the ValuesOf helper type at the top
-	tsEnumString.WriteString("type ValuesOf<T> = T[keyof T]\n\t\n")
-
-	err = db.StepQuery(ctx, `
-		SELECT t.name,
-		       'export declare const ' || t.name || ': {' || char(10) ||
-		       '    ' || GROUP_CONCAT('readonly ' || ev.value || ': "' || ev.value || '";', char(10) || '    ' ORDER BY ev.value) ||
-		       char(10) || '}' || char(10) || char(10) ||
-		       'export type ' || t.name || '$options = ValuesOf<typeof ' || t.name || '>' || char(10) || ' ' || char(10) as ts_enum_definition
-		FROM types t
-		JOIN enum_values ev ON ev.parent = t.name
-		WHERE t.built_in = 0
-		GROUP BY t.name
-		ORDER BY t.name
-	`, nil, func(stmt *sqlite.Stmt) {
-		tsEnumDefinition := stmt.ColumnText(1)
-		tsEnumString.WriteString(tsEnumDefinition)
-	})
-
-	if err != nil {
-		return plugins.WrapError(err)
+	for _, enum := range enums {
+		tsEnumString.WriteString(generateTSEnumDefinition(enum))
 	}
 
+	// writing to enums.d.ts
 	enumsTypesFileLocation := projectConfig.DefinitionsEnumTypes()
-
 	tsDir := filepath.Dir(enumsTypesFileLocation)
 	err = fs.MkdirAll(tsDir, 0755)
 	if err != nil {
@@ -328,7 +339,7 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 	}
 
 	// generate index.js file
-	indexJsContent := "\nexport * from './enums.js'\n\t\n"
+	indexJsContent := "\nexport * from './enums.js'\n\n"
 	indexJsLocation := projectConfig.DefinitionsIndexJs()
 
 	err = afero.WriteFile(fs, indexJsLocation, []byte(indexJsContent), 0644)
@@ -337,7 +348,7 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 	}
 
 	// generate index.d.ts file
-	indexDtsContent := "\nexport * from './enums.js'\n\t\n"
+	indexDtsContent := "\nexport * from './enums.js'\n\n"
 	indexDtsLocation := projectConfig.DefinitionsIndexDts()
 
 	err = afero.WriteFile(fs, indexDtsLocation, []byte(indexDtsContent), 0644)
@@ -348,7 +359,6 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 	return nil
 }
 
-// helper functions
 func isBuiltInScalar(typeName string) bool {
 	builtInScalars := map[string]bool{
 		"String":  true,
@@ -358,4 +368,32 @@ func isBuiltInScalar(typeName string) bool {
 		"ID":      true,
 	}
 	return builtInScalars[typeName]
+}
+
+func generateJSEnumDefinition(enum EnumData) string {
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("export const %s = {\n", enum.Name))
+
+	for i, value := range enum.Values {
+		if i > 0 {
+			result.WriteString(",\n")
+		}
+		result.WriteString(fmt.Sprintf("    \"%s\": \"%s\"", value, value))
+	}
+
+	result.WriteString("\n};\n\n")
+	return result.String()
+}
+
+func generateTSEnumDefinition(enum EnumData) string {
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("export declare const %s: {\n", enum.Name))
+
+	for _, value := range enum.Values {
+		result.WriteString(fmt.Sprintf("    readonly %s: \"%s\";\n", value, value))
+	}
+
+	result.WriteString("}\n\n")
+	result.WriteString(fmt.Sprintf("export type %s$options = ValuesOf<typeof %s>\n\n", enum.Name, enum.Name))
+	return result.String()
 }
