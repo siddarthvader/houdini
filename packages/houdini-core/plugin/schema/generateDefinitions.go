@@ -13,27 +13,6 @@ import (
 	"code.houdinigraphql.com/plugins"
 )
 
-type directive struct {
-	Name        string
-	Internal    bool
-	Repeatable  bool
-	Description string
-	Arguments   []*argument
-	Locations   []string
-}
-
-type argument struct {
-	Name          string
-	Type          string
-	TypeModifiers string
-	DefaultValue  string
-}
-
-type enumData struct {
-	Name   string
-	Values []string
-}
-
 func GenerateDefinitionFiles(
 	ctx context.Context,
 	db plugins.DatabasePool[config.PluginConfig],
@@ -67,6 +46,22 @@ func GenerateDefinitionFiles(
 }
 
 func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
+	type argument struct {
+		Name          string
+		Type          string
+		TypeModifiers string
+		DefaultValue  string
+	}
+
+	type directive struct {
+		Name        string
+		Internal    bool
+		Repeatable  bool
+		Description string
+		Arguments   []*argument
+		Locations   []string
+	}
+
 	directives := make(map[string]*directive)
 	errs := &plugins.ErrorList{}
 	customTypes := make(map[string]bool)
@@ -161,7 +156,6 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 		}
 
 		schemaString.WriteString("\n\n")
-
 	})
 	if err != nil {
 		return plugins.WrapError(err)
@@ -192,7 +186,7 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 			continue
 		}
 
-		//if we found enum values, write the enum definition
+		// if we found enum values, write the enum definition
 		if len(enumValues) > 0 {
 			schemaString.WriteString(fmt.Sprintf("enum %s {\n", typeName))
 			for _, value := range enumValues {
@@ -205,21 +199,19 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 	schemaFileLocation := projectConfig.DefinitionsSchemaPath()
 
 	dir := filepath.Dir(schemaFileLocation)
-	err = fs.MkdirAll(dir, 0755)
+	err = fs.MkdirAll(dir, 0o755)
 	if err != nil {
 		return plugins.WrapError(err)
 	}
 
-	err = afero.WriteFile(fs, schemaFileLocation, []byte(schemaString.String()), 0644)
+	err = afero.WriteFile(fs, schemaFileLocation, []byte(schemaString.String()), 0o644)
 	if err != nil {
 		return plugins.WrapError(err)
 	}
 	return nil
-
 }
 
 func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
-
 	// get all documents from docuemnt table joined with discovered list and that are fragments
 	var documentString strings.Builder
 
@@ -233,7 +225,6 @@ func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.P
 		documentString.WriteString(printed)
 		documentString.WriteString("\n\n")
 	})
-
 	if err != nil {
 		return plugins.WrapError(err)
 	}
@@ -241,18 +232,24 @@ func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.P
 	documentsFileLocation := projectConfig.DefinitionsDocumentsPath()
 
 	dir := filepath.Dir(documentsFileLocation)
-	err = fs.MkdirAll(dir, 0755)
+	err = fs.MkdirAll(dir, 0o755)
 	if err != nil {
 		return plugins.WrapError(err)
 	}
 
-	err = afero.WriteFile(fs, documentsFileLocation, []byte(documentString.String()), 0644)
+	err = afero.WriteFile(fs, documentsFileLocation, []byte(documentString.String()), 0o644)
 	if err != nil {
 		return plugins.WrapError(err)
 	}
 	return nil
 }
+
 func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
+	type enumData struct {
+		Name   string
+		Values []string
+	}
+
 	// collect all enum data from database
 	enums := []enumData{}
 	errs := &plugins.ErrorList{}
@@ -288,7 +285,6 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 
 		enums = append(enums, enum)
 	})
-
 	if err != nil {
 		return plugins.WrapError(err)
 	}
@@ -299,19 +295,27 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 
 	var enumString strings.Builder
 	for _, enum := range enums {
-		enumString.WriteString(generateJSEnumDefinition(enum))
+		// js enum definition generation
+		enumString.WriteString(fmt.Sprintf("export const %s = {\n", enum.Name))
+		for i, value := range enum.Values {
+			if i > 0 {
+				enumString.WriteString(",\n")
+			}
+			enumString.WriteString(fmt.Sprintf("    \"%s\": \"%s\"", value, value))
+		}
+		enumString.WriteString("\n};\n\n")
 	}
 
 	// writing enums.js
 	enumsFileLocation := projectConfig.DefinitionsEnumRuntime()
 	dir := filepath.Dir(enumsFileLocation)
 
-	err = fs.MkdirAll(dir, 0755)
+	err = fs.MkdirAll(dir, 0o755)
 	if err != nil {
 		return plugins.WrapError(err)
 	}
 
-	err = afero.WriteFile(fs, enumsFileLocation, []byte(enumString.String()), 0644)
+	err = afero.WriteFile(fs, enumsFileLocation, []byte(enumString.String()), 0o644)
 	if err != nil {
 		return plugins.WrapError(err)
 	}
@@ -321,18 +325,24 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 	tsEnumString.WriteString("type ValuesOf<T> = T[keyof T]\n\n")
 
 	for _, enum := range enums {
-		tsEnumString.WriteString(generateTSEnumDefinition(enum))
+		// ts enum definition generation
+		tsEnumString.WriteString(fmt.Sprintf("export declare const %s: {\n", enum.Name))
+		for _, value := range enum.Values {
+			tsEnumString.WriteString(fmt.Sprintf("    readonly %s: \"%s\";\n", value, value))
+		}
+		tsEnumString.WriteString("}\n\n")
+		tsEnumString.WriteString(fmt.Sprintf("export type %s$options = ValuesOf<typeof %s>\n\n", enum.Name, enum.Name))
 	}
 
 	// writing to enums.d.ts
 	enumsTypesFileLocation := projectConfig.DefinitionsEnumTypes()
 	tsDir := filepath.Dir(enumsTypesFileLocation)
-	err = fs.MkdirAll(tsDir, 0755)
+	err = fs.MkdirAll(tsDir, 0o755)
 	if err != nil {
 		return plugins.WrapError(err)
 	}
 
-	err = afero.WriteFile(fs, enumsTypesFileLocation, []byte(tsEnumString.String()), 0644)
+	err = afero.WriteFile(fs, enumsTypesFileLocation, []byte(tsEnumString.String()), 0o644)
 	if err != nil {
 		return plugins.WrapError(err)
 	}
@@ -341,7 +351,7 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 	indexJsContent := "\nexport * from './enums.js'\n\n"
 	indexJsLocation := projectConfig.DefinitionsIndexJs()
 
-	err = afero.WriteFile(fs, indexJsLocation, []byte(indexJsContent), 0644)
+	err = afero.WriteFile(fs, indexJsLocation, []byte(indexJsContent), 0o644)
 	if err != nil {
 		return plugins.WrapError(err)
 	}
@@ -350,7 +360,7 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 	indexDtsContent := "\nexport * from './enums.js'\n\n"
 	indexDtsLocation := projectConfig.DefinitionsIndexDts()
 
-	err = afero.WriteFile(fs, indexDtsLocation, []byte(indexDtsContent), 0644)
+	err = afero.WriteFile(fs, indexDtsLocation, []byte(indexDtsContent), 0o644)
 	if err != nil {
 		return plugins.WrapError(err)
 	}
@@ -358,6 +368,7 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 	return nil
 }
 
+// helper
 func isBuiltInScalar(typeName string) bool {
 	builtInScalars := map[string]bool{
 		"String":  true,
@@ -367,32 +378,4 @@ func isBuiltInScalar(typeName string) bool {
 		"ID":      true,
 	}
 	return builtInScalars[typeName]
-}
-
-func generateJSEnumDefinition(enum enumData) string {
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("export const %s = {\n", enum.Name))
-
-	for i, value := range enum.Values {
-		if i > 0 {
-			result.WriteString(",\n")
-		}
-		result.WriteString(fmt.Sprintf("    \"%s\": \"%s\"", value, value))
-	}
-
-	result.WriteString("\n};\n\n")
-	return result.String()
-}
-
-func generateTSEnumDefinition(enum enumData) string {
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("export declare const %s: {\n", enum.Name))
-
-	for _, value := range enum.Values {
-		result.WriteString(fmt.Sprintf("    readonly %s: \"%s\";\n", value, value))
-	}
-
-	result.WriteString("}\n\n")
-	result.WriteString(fmt.Sprintf("export type %s$options = ValuesOf<typeof %s>\n\n", enum.Name, enum.Name))
-	return result.String()
 }
