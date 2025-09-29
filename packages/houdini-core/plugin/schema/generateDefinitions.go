@@ -13,23 +13,23 @@ import (
 	"code.houdinigraphql.com/plugins"
 )
 
-type Directive struct {
+type directive struct {
 	Name        string
 	Internal    bool
 	Repeatable  bool
 	Description string
-	Arguments   []*Argument
+	Arguments   []*argument
 	Locations   []string
 }
 
-type Argument struct {
+type argument struct {
 	Name          string
 	Type          string
 	TypeModifiers string
 	DefaultValue  string
 }
 
-type EnumData struct {
+type enumData struct {
 	Name   string
 	Values []string
 }
@@ -67,7 +67,7 @@ func GenerateDefinitionFiles(
 }
 
 func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
-	directives := make(map[string]*Directive)
+	directives := make(map[string]*directive)
 	errs := &plugins.ErrorList{}
 	customTypes := make(map[string]bool)
 
@@ -84,23 +84,22 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 		description := stmt.ColumnText(3)
 
 		// create directive struct to collect data
-		directive := &Directive{
+		directive := &directive{
 			Name:        name,
 			Internal:    internal,
 			Repeatable:  repeatable,
 			Description: description,
-			Arguments:   []*Argument{},
+			Arguments:   []*argument{},
 			Locations:   []string{},
 		}
 		directives[name] = directive
-
 		// collect arguments first
 		argErr := db.StepQuery(ctx, `
 				SELECT name, type, type_modifiers, default_value
 				FROM directive_arguments
 				WHERE parent = $directive
 			`, map[string]any{"directive": name}, func(stmt *sqlite.Stmt) {
-			arg := &Argument{
+			arg := &argument{
 				Name:          stmt.ColumnText(0),
 				Type:          stmt.ColumnText(1),
 				TypeModifiers: stmt.ColumnText(2),
@@ -255,7 +254,7 @@ func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.P
 }
 func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
 	// collect all enum data from database
-	enums := []EnumData{}
+	enums := []enumData{}
 	errs := &plugins.ErrorList{}
 
 	// all enum types and their values using simple queries
@@ -266,7 +265,7 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 		ORDER BY t.name
 	`, nil, func(stmt *sqlite.Stmt) {
 		enumName := stmt.ColumnText(0)
-		enum := EnumData{
+		enum := enumData{
 			Name:   enumName,
 			Values: []string{},
 		}
@@ -370,7 +369,7 @@ func isBuiltInScalar(typeName string) bool {
 	return builtInScalars[typeName]
 }
 
-func generateJSEnumDefinition(enum EnumData) string {
+func generateJSEnumDefinition(enum enumData) string {
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("export const %s = {\n", enum.Name))
 
@@ -385,7 +384,7 @@ func generateJSEnumDefinition(enum EnumData) string {
 	return result.String()
 }
 
-func generateTSEnumDefinition(enum EnumData) string {
+func generateTSEnumDefinition(enum enumData) string {
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("export declare const %s: {\n", enum.Name))
 
