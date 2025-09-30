@@ -2,6 +2,9 @@ package schema
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/afero"
 	"zombiezen.com/go/sqlite"
@@ -16,24 +19,363 @@ func GenerateDefinitionFiles(
 	fs afero.Fs,
 	sortKeys bool,
 ) error {
-	// a query to look for enums that are defined
-	enumSearch := `
-    SELECT * FROM enum_values ON types where enum_values.parent = types.name
-  `
-
-	// collect all of the results
-	type CollectedEnum struct {
-		Name     string
-		Internal bool
-		Values   []string
+	projectConfig, err := db.ProjectConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get project config: %w", err)
 	}
 
-	err := db.StepQuery(ctx, enumSearch, map[string]any{}, func(q *sqlite.Stmt) {
-	})
+	// generate schema.graphql
+	err = generateSchemaFile(ctx, db, fs, projectConfig)
 	if err != nil {
 		return err
 	}
 
-	// we're done
+	// generate documents.gql
+	err = generateDocumentsFile(ctx, db, fs, projectConfig)
+	if err != nil {
+		return err
+	}
+
+	// generate enum files (enums.js, enums.d.ts, index files)
+	err = generateEnumFiles(ctx, db, fs, projectConfig)
+	if err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
+	type argument struct {
+		Name          string
+		Type          string
+		TypeModifiers string
+		DefaultValue  string
+	}
+
+	type directive struct {
+		Name        string
+		Internal    bool
+		Repeatable  bool
+		Description string
+		Arguments   []*argument
+		Locations   []string
+	}
+
+	directives := make(map[string]*directive)
+	errs := &plugins.ErrorList{}
+	customTypes := make(map[string]bool)
+
+	var schemaString strings.Builder
+	// get all internal directives
+	err := db.StepQuery(ctx, `
+		SELECT name, internal, repeatable, description
+		FROM directives
+		WHERE internal = 1
+	`, nil, func(stmt *sqlite.Stmt) {
+		name := stmt.ColumnText(0)
+		internal := stmt.ColumnInt(1) == 1
+		repeatable := stmt.ColumnInt(2) == 1
+		description := stmt.ColumnText(3)
+
+		// create directive struct to collect data
+		directive := &directive{
+			Name:        name,
+			Internal:    internal,
+			Repeatable:  repeatable,
+			Description: description,
+			Arguments:   []*argument{},
+			Locations:   []string{},
+		}
+		directives[name] = directive
+		// collect arguments first
+		argErr := db.StepQuery(ctx, `
+				SELECT name, type, type_modifiers, default_value
+				FROM directive_arguments
+				WHERE parent = $directive
+			`, map[string]any{"directive": name}, func(stmt *sqlite.Stmt) {
+			arg := &argument{
+				Name:          stmt.ColumnText(0),
+				Type:          stmt.ColumnText(1),
+				TypeModifiers: stmt.ColumnText(2),
+				DefaultValue:  stmt.ColumnText(3),
+			}
+			directive.Arguments = append(directive.Arguments, arg)
+
+			// collect custom types (skip built-in GraphQL scalars)
+			if !isBuiltInScalar(arg.Type) {
+				customTypes[arg.Type] = true
+			}
+		})
+		if argErr != nil {
+			errs.Append(plugins.WrapError(argErr))
+			return
+		}
+
+		// collect locations
+		locErr := db.StepQuery(ctx, `
+				SELECT location
+				FROM directive_locations
+				WHERE directive = $directive
+			`, map[string]any{"directive": name}, func(stmt *sqlite.Stmt) {
+			location := stmt.ColumnText(0)
+			directive.Locations = append(directive.Locations, location)
+		})
+		if locErr != nil {
+			errs.Append(plugins.WrapError(locErr))
+			return
+		}
+
+		if description != "" && description != "null" {
+			// writing the desc as a comment
+			schemaString.WriteString(fmt.Sprintf("\"\"\"%s\"\"\"\n", description))
+		}
+
+		schemaString.WriteString(fmt.Sprintf("directive @%s", name))
+
+		// arguments in parentheses
+		if len(directive.Arguments) > 0 {
+			schemaString.WriteString("(")
+			for i, arg := range directive.Arguments {
+				if i > 0 {
+					schemaString.WriteString(", ")
+				}
+				schemaString.WriteString(fmt.Sprintf("%s: %s%s", arg.Name, arg.Type, arg.TypeModifiers))
+			}
+			schemaString.WriteString(")")
+
+			// add repeatable keyword
+			if repeatable {
+				schemaString.WriteString(" repeatable")
+			}
+
+			// ddd locations
+			schemaString.WriteString(" on ")
+			schemaString.WriteString(strings.Join(directive.Locations, " | "))
+
+		}
+
+		schemaString.WriteString("\n\n")
+	})
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	if errs.Error() != "" {
+		return errs
+	}
+
+	// writing enum definitions for custom types referenced by directive arguments at the end of the file
+	// writing at the end of the file(schema.graphql) cost us one more loop but it is cleaner
+	for typeName := range customTypes {
+		enumValues := []string{}
+
+		// query enum values for this type
+		enumErr := db.StepQuery(ctx, `
+			SELECT value
+			FROM enum_values
+			WHERE parent = $typeName
+			ORDER BY value
+		`, map[string]any{"typeName": typeName}, func(stmt *sqlite.Stmt) {
+			value := stmt.ColumnText(0)
+			enumValues = append(enumValues, value)
+		})
+
+		if enumErr != nil {
+			errs.Append(plugins.WrapError(enumErr))
+			continue
+		}
+
+		// if we found enum values, write the enum definition
+		if len(enumValues) > 0 {
+			schemaString.WriteString(fmt.Sprintf("enum %s {\n", typeName))
+			for _, value := range enumValues {
+				schemaString.WriteString(fmt.Sprintf("  %s\n", value))
+			}
+			schemaString.WriteString("}\n\n")
+		}
+	}
+
+	schemaFileLocation := projectConfig.DefinitionsSchemaPath()
+
+	dir := filepath.Dir(schemaFileLocation)
+	err = fs.MkdirAll(dir, 0o755)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	err = afero.WriteFile(fs, schemaFileLocation, []byte(schemaString.String()), 0o644)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+	return nil
+}
+
+func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
+	// get all documents from docuemnt table joined with discovered list and that are fragments
+	var documentString strings.Builder
+
+	err := db.StepQuery(ctx, `
+		SELECT d.printed
+		FROM discovered_lists dl
+		JOIN documents d ON dl.raw_document = d.raw_document
+		WHERE d.kind = 'fragment'
+	`, nil, func(stmt *sqlite.Stmt) {
+		printed := stmt.ColumnText(0)
+		documentString.WriteString(printed)
+		documentString.WriteString("\n\n")
+	})
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	documentsFileLocation := projectConfig.DefinitionsDocumentsPath()
+
+	dir := filepath.Dir(documentsFileLocation)
+	err = fs.MkdirAll(dir, 0o755)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	err = afero.WriteFile(fs, documentsFileLocation, []byte(documentString.String()), 0o644)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+	return nil
+}
+
+func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
+	type enumData struct {
+		Name   string
+		Values []string
+	}
+
+	// collect all enum data from database
+	enums := []enumData{}
+	errs := &plugins.ErrorList{}
+
+	// all enum types and their values using simple queries
+	err := db.StepQuery(ctx, `
+		SELECT t.name
+		FROM types t
+		WHERE t.built_in = 0
+		ORDER BY t.name
+	`, nil, func(stmt *sqlite.Stmt) {
+		enumName := stmt.ColumnText(0)
+		enum := enumData{
+			Name:   enumName,
+			Values: []string{},
+		}
+
+		// all values for this enum
+		valueErr := db.StepQuery(ctx, `
+			SELECT value
+			FROM enum_values
+			WHERE parent = $enumName
+			ORDER BY value
+		`, map[string]any{"enumName": enumName}, func(valueStmt *sqlite.Stmt) {
+			value := valueStmt.ColumnText(0)
+			enum.Values = append(enum.Values, value)
+		})
+
+		if valueErr != nil {
+			errs.Append(plugins.WrapError(valueErr))
+			return
+		}
+
+		enums = append(enums, enum)
+	})
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	if errs.Error() != "" {
+		return errs
+	}
+
+	var enumString strings.Builder
+	for _, enum := range enums {
+		// js enum definition generation
+		enumString.WriteString(fmt.Sprintf("export const %s = {\n", enum.Name))
+		for i, value := range enum.Values {
+			if i > 0 {
+				enumString.WriteString(",\n")
+			}
+			enumString.WriteString(fmt.Sprintf("    \"%s\": \"%s\"", value, value))
+		}
+		enumString.WriteString("\n};\n\n")
+	}
+
+	// writing enums.js
+	enumsFileLocation := projectConfig.DefinitionsEnumRuntime()
+	dir := filepath.Dir(enumsFileLocation)
+
+	err = fs.MkdirAll(dir, 0o755)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	err = afero.WriteFile(fs, enumsFileLocation, []byte(enumString.String()), 0o644)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	// ts enum definitions using template strings
+	var tsEnumString strings.Builder
+	tsEnumString.WriteString("type ValuesOf<T> = T[keyof T]\n\n")
+
+	for _, enum := range enums {
+		// ts enum definition generation
+		tsEnumString.WriteString(fmt.Sprintf("export declare const %s: {\n", enum.Name))
+		for _, value := range enum.Values {
+			tsEnumString.WriteString(fmt.Sprintf("    readonly %s: \"%s\";\n", value, value))
+		}
+		tsEnumString.WriteString("}\n\n")
+		tsEnumString.WriteString(fmt.Sprintf("export type %s$options = ValuesOf<typeof %s>\n\n", enum.Name, enum.Name))
+	}
+
+	// writing to enums.d.ts
+	enumsTypesFileLocation := projectConfig.DefinitionsEnumTypes()
+	tsDir := filepath.Dir(enumsTypesFileLocation)
+	err = fs.MkdirAll(tsDir, 0o755)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	err = afero.WriteFile(fs, enumsTypesFileLocation, []byte(tsEnumString.String()), 0o644)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	// generate index.js file
+	indexJsContent := "\nexport * from './enums.js'\n\n"
+	indexJsLocation := projectConfig.DefinitionsIndexJs()
+
+	err = afero.WriteFile(fs, indexJsLocation, []byte(indexJsContent), 0o644)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	// generate index.d.ts file
+	indexDtsContent := "\nexport * from './enums.js'\n\n"
+	indexDtsLocation := projectConfig.DefinitionsIndexDts()
+
+	err = afero.WriteFile(fs, indexDtsLocation, []byte(indexDtsContent), 0o644)
+	if err != nil {
+		return plugins.WrapError(err)
+	}
+
+	return nil
+}
+
+// helper
+func isBuiltInScalar(typeName string) bool {
+	builtInScalars := map[string]bool{
+		"String":  true,
+		"Boolean": true,
+		"Int":     true,
+		"Float":   true,
+		"ID":      true,
+	}
+	return builtInScalars[typeName]
 }

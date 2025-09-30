@@ -5,6 +5,7 @@ import (
 
 	"code.houdinigraphql.com/packages/houdini-core/plugin/documents"
 	"code.houdinigraphql.com/packages/houdini-core/plugin/documents/artifacts"
+	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 )
 
 func (p *HoudiniCore) Generate(ctx context.Context) ([]string, error) {
@@ -24,6 +25,12 @@ func (p *HoudiniCore) Generate(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	generated = append(generated, persistentQueryFiles...)
+
+	// generate definitions files (schema.graphql, documents.gql, enums)
+	err = schema.GenerateDefinitionFiles(ctx, p.DB, p.Fs, false)
+	if err != nil {
+		return nil, err
+	}
 
 	// we're done
 	return files, nil
