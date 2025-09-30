@@ -1,10 +1,10 @@
 import { mergeSchemas } from '@graphql-tools/schema'
 import * as graphql from 'graphql'
-import { GraphQLSchema } from 'graphql'
+import type { GraphQLSchema } from 'graphql'
 import { pathToFileURL } from 'node:url'
 
 import type { ConfigFile } from '../runtime/lib/config'
-import { local_api_dir } from './conventions'
+import { houdini_root, local_api_dir } from './conventions'
 import { HoudiniError } from './error'
 import * as fs from './fs'
 import * as path from './path'
@@ -28,7 +28,7 @@ export type Config = {
 }
 
 export const default_config: ConfigFile = {
-	schemaPath: './.houdini/schema.graphql',
+	schemaPath: '.houdini/schema.graphql',
 	include: ['src/**/*'],
 	runtimeDir: '.houdini',
 	cacheBufferSize: 10,
@@ -85,8 +85,6 @@ export async function get_config({
 		}
 	}
 
-	config_path = config_path!
-
 	// there isn't a pending config so let's make one to claim
 	let resolve: (cfg: Config | PromiseLike<Config>) => void = () => {}
 	let reject = (message?: any) => {}
@@ -120,14 +118,20 @@ export async function get_config({
 			}
 		} catch {}
 
-		_config = {
+		const partialConfig: Partial<Config> = {
 			root_dir,
 			config_file,
 			filepath: config_path,
+			plugins: [],
+		}
+
+		fs.mkdirpSync(houdini_root(partialConfig as Config))
+
+		_config = {
+			...(partialConfig as Config),
 			schema: local_schema
 				? await load_local_schema(config_file, local_schema)
 				: await load_schema_file(config_file.schemaPath),
-			plugins: [],
 		}
 
 		// we need to process the plugins before we instantiate the config object

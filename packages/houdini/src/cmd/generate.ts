@@ -1,5 +1,4 @@
-import { codegen, codegen_setup } from 'src/lib'
-
+import { codegen_setup, init_db, run_pipeline } from '../lib'
 import { format_error } from '../lib/error'
 import { get_config, type Config } from '../lib/project'
 
@@ -28,8 +27,10 @@ export async function generate(
 		// grab the config file
 		let config: Config | null = await get_config()
 
+		const [db, dbFilepath] = await init_db(config)
+
 		// initialize the codegen pipe
-		const { trigger_hook, close } = await codegen_setup(config, mode)
+		const { trigger_hook, close } = await codegen_setup(config, mode, db, dbFilepath)
 
 		// Function to handle graceful shutdown
 		on_close = async () => {
@@ -46,7 +47,7 @@ export async function generate(
 		process.on('SIGTERM', on_close)
 
 		// kick off the codegen pipeline
-		await codegen(trigger_hook)
+		await run_pipeline(trigger_hook)
 
 		// we're done, close everything
 		on_close()

@@ -3,7 +3,9 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -15,7 +17,7 @@ func pluginHooks[PluginConfig any](
 	hooks := map[string]bool{}
 	if _, ok := plugin.(IncludeRuntime); ok {
 		hooks["Generate"] = true
-		http.Handle("/generate", InjectTaskID(EventHook(handleGenerate(plugin))))
+		http.Handle("/generate", InjectTaskID(EventHookWithResponse(handleGenerate(plugin))))
 	}
 	if _, ok := plugin.(StaticRuntime); ok {
 		hooks["AfterLoad"] = true
@@ -23,7 +25,7 @@ func pluginHooks[PluginConfig any](
 	}
 	if _, ok := plugin.(TransformRuntime); ok {
 		hooks["Generate"] = true
-		http.Handle("/generate", InjectTaskID(EventHook(handleGenerate(plugin))))
+		http.Handle("/generate", InjectTaskID(EventHookWithResponse(handleGenerate(plugin))))
 	}
 	if _, ok := plugin.(Config); ok {
 		hooks["Config"] = true
@@ -39,7 +41,10 @@ func pluginHooks[PluginConfig any](
 	}
 	if p, ok := plugin.(ExtractDocuments); ok {
 		hooks["ExtractDocuments"] = true
-		http.Handle("/extractdocuments", InjectTaskID(EventHook(p.ExtractDocuments)))
+		http.Handle(
+			"/extractdocuments",
+			InjectTaskID(EventHookWithInput[ExtractDocumentsInput](p.ExtractDocuments)),
+		)
 	}
 	if p, ok := plugin.(AfterExtract); ok {
 		hooks["AfterExtract"] = true
@@ -67,7 +72,7 @@ func pluginHooks[PluginConfig any](
 	}
 	if _, ok := plugin.(Generate); ok {
 		hooks["Generate"] = true
-		http.Handle("/generate", InjectTaskID(EventHook(handleGenerate(plugin))))
+		http.Handle("/generate", InjectTaskID(EventHookWithResponse(handleGenerate(plugin))))
 	}
 	if _, ok := plugin.(ArtifactData); ok {
 		hooks["AfterGenerate"] = true
@@ -111,7 +116,7 @@ func InjectTaskID(next http.Handler) http.Handler {
 	// the task id is passed in the request headers
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// get the task id from the request headers
-		taskID := r.Header.Get("Task-ID")
+		taskID := r.Header.Get("X-Task-ID")
 
 		// add the task id to the context
 		ctx := ContextWithTaskID(r.Context(), taskID)
@@ -150,15 +155,61 @@ func EventHook(hook func(context.Context) error) http.Handler {
 	})
 }
 
+func EventHookWithResponse(hook func(context.Context) (any, error)) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// call the function
+		result, err := hook(r.Context())
+		if err != nil {
+			handleError(w, err)
+			return
+		}
+
+		// write the response
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			handleError(w, err)
+			return
+		}
+	})
+}
+
+func EventHookWithInput[T any](hook func(context.Context, T) error) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// parse the input from the request body
+		var input T
+
+		const maxBody = 1 << 20 // 1MB
+		defer r.Body.Close()
+		err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody)).Decode(&input)
+		if err != nil && !errors.Is(err, io.EOF) {
+			handleError(w, err)
+			return
+		}
+
+		// call the function
+		err = hook(r.Context(), input)
+		if err != nil {
+			handleError(w, err)
+			return
+		}
+	})
+}
+
+type ExtractDocumentsInput struct {
+	Filepaths []string `json:"filepaths"`
+}
+
 func handleGenerate[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) error {
-	return func(ctx context.Context) error {
+) func(ctx context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
+		filepaths := []string{}
+
 		// if the plugin defines a runtime to include
 		if includeRuntime, ok := plugin.(IncludeRuntime); ok {
 			runtimePath, err := includeRuntime.IncludeRuntime(ctx)
 			if err != nil {
-				return err
+				return nil, err
 			}
 
 			fmt.Println("include runtime", runtimePath)
@@ -166,14 +217,15 @@ func handleGenerate[PluginConfig any](
 
 		// invoke the generate hook
 		if generate, ok := plugin.(Generate); ok {
-			err := generate.Generate(ctx)
+			fps, err := generate.Generate(ctx)
 			if err != nil {
-				return err
+				return nil, err
 			}
+			filepaths = append(filepaths, fps...)
 		}
 
 		// nothing went wrong
-		return nil
+		return filepaths, nil
 	}
 }
 

@@ -1,9 +1,14 @@
 package fragmentArguments_test
 
 import (
+	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"code.houdinigraphql.com/packages/houdini-core/config"
+	"code.houdinigraphql.com/packages/houdini-core/plugin"
+	"code.houdinigraphql.com/packages/houdini-core/plugin/fragmentArguments"
 	"code.houdinigraphql.com/plugins/tests"
 )
 
@@ -15,7 +20,7 @@ func TestFragmentArgumentTransform(t *testing.T) {
         users(name: String): [User!]!
       }
 
-      type User { 
+      type User {
         firstName: String!
         friends(name: String): [User!]!
         id: ID!
@@ -28,7 +33,7 @@ func TestFragmentArgumentTransform(t *testing.T) {
 				Input: []string{
 					`
           query AllUsers($name: String) {
-            user { 
+            user {
               ...UserInfo @with(name: $name)
             }
           }
@@ -45,7 +50,7 @@ func TestFragmentArgumentTransform(t *testing.T) {
 				Expected: []tests.ExpectedDocument{
 					tests.ExpectedDoc(`
             query AllUsers($name: String)  {
-              user { 
+              user {
                 id
                 __typename
                 ...UserInfo_4E9dx0 @with(name: $name)
@@ -71,7 +76,7 @@ func TestFragmentArgumentTransform(t *testing.T) {
 				Input: []string{
 					`
             query AllUsers {
-              user { 
+              user {
                 ...UserInfo @with(name: "Hello")
               }
             }
@@ -88,7 +93,7 @@ func TestFragmentArgumentTransform(t *testing.T) {
 				Expected: []tests.ExpectedDocument{
 					tests.ExpectedDoc(`
             query AllUsers {
-              user { 
+              user {
                 id
                 __typename
                 ...UserInfo_g8N34 @with(name: "Hello")
@@ -163,7 +168,7 @@ func TestFragmentArgumentTransform(t *testing.T) {
             @arguments(name: {type: "String!"} ) {
             friends(name:"John") @deprecated(reason: $name) {
                 firstName
-              }           
+              }
             }
           `,
 				},
@@ -202,7 +207,7 @@ func TestFragmentArgumentTransform(t *testing.T) {
             @arguments(name: {type: "String!"} ) {
             friends @deprecated(reason: $name) {
                 firstName
-              }           
+              }
             }
           `,
 				},
@@ -329,6 +334,110 @@ func TestFragmentArgumentTransform(t *testing.T) {
 					tests.ExpectedDoc(`
             fragment FriendInfo_4xzoz7 on User {
               friends(name: "FriendInfo") {
+                firstName
+                id
+                __typename
+              }
+              id
+              __typename
+            }
+          `),
+				},
+			},
+			{
+				Name: "Same fragment with same arguments used in multiple documents",
+				Pass: true,
+				Input: []string{
+					`query FirstQuery { user { ...UserInfo @with(name: "Hello") } }`,
+					`query SecondQuery { user { ...UserInfo @with(name: "Hello") } }`,
+					`fragment UserInfo on User @arguments(name: {type: "String!"}) { friends(name: $name) { firstName } }`,
+				},
+				Expected: []tests.ExpectedDocument{
+					tests.ExpectedDoc(
+						`query FirstQuery { user { ...UserInfo_g8N34 @with(name: "Hello") id __typename } }`,
+					),
+					tests.ExpectedDoc(
+						`query SecondQuery { user { ...UserInfo_g8N34 @with(name: "Hello") id __typename } }`,
+					),
+					tests.ExpectedDoc(
+						`fragment UserInfo_g8N34 on User { friends(name: "Hello") { firstName id __typename } id __typename  }`,
+					),
+				},
+			},
+		},
+	})
+}
+
+func TestFragmentArgumentTransform_multipleRuns(t *testing.T) {
+	tests.RunTable(t, tests.Table[config.PluginConfig]{
+		Schema: `
+      type Query {
+        user: User!
+        users(name: String): [User!]!
+      }
+
+      type User {
+        firstName: String!
+        friends(name: String): [User!]!
+        id: ID!
+      }
+    `,
+		PerformTest: func(t *testing.T, plugin *plugin.HoudiniCore, test tests.Test[config.PluginConfig]) {
+			// extract twice
+			err := plugin.AfterExtract(context.Background())
+			if err != nil {
+				require.False(t, test.Pass, err.Error())
+				return
+			}
+
+			err = plugin.AfterValidate(context.Background())
+			if err != nil {
+				require.False(t, test.Pass, err.Error())
+				return
+			}
+			err = fragmentArguments.Transform(context.Background(), plugin.DB)
+			if err != nil {
+				require.False(t, test.Pass, err.Error())
+				return
+			}
+
+			// make sure the expected document is correct
+			tests.ValidateExpectedDocuments(t, plugin.DB, test.Expected)
+		},
+		Tests: []tests.Test[config.PluginConfig]{
+			{
+				Name: "Threads query arguments onto fragment",
+				Pass: true,
+				Input: []string{
+					`
+          query AllUsers($name: String) {
+            user {
+              ...UserInfo @with(name: $name)
+            }
+          }
+          `,
+					`
+            fragment UserInfo on User
+              @arguments(name: {type: "String!"} ) {
+                  friends(name: $name) {
+                      firstName
+                  }
+            }
+          `,
+				},
+				Expected: []tests.ExpectedDocument{
+					tests.ExpectedDoc(`
+            query AllUsers($name: String)  {
+              user {
+                id
+                __typename
+                ...UserInfo_4E9dx0 @with(name: $name)
+              }
+            }
+          `),
+					tests.ExpectedDoc(`
+            fragment UserInfo_4E9dx0 on User {
+              friends(name: $name) {
                 firstName
                 id
                 __typename

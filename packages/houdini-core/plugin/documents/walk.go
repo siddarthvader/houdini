@@ -3,11 +3,11 @@ package documents
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	"github.com/spf13/afero"
 	"golang.org/x/sync/errgroup"
-	"zombiezen.com/go/sqlite"
 
 	"code.houdinigraphql.com/packages/houdini-core/glob"
 	"code.houdinigraphql.com/plugins"
@@ -50,29 +50,38 @@ func Walk[PluginConfig any](
 	})
 }
 
-// ExtractTaskDocuments looks for all raw_documents associated with a specific task ID
-// and extracts them into the database.
-func ExtractTaskDocuments[PluginConfig any](
+func ExtractFromFilepaths[PluginConfig any](
 	ctx context.Context,
 	db plugins.DatabasePool[PluginConfig],
 	fs afero.Fs,
-	taskID string,
+	files []string,
 ) error {
-	// extract the documents that the walker finds
+	// load the project config
+	config, err := db.ProjectConfig(ctx)
+	if err != nil {
+		return err
+	}
+
+	root := config.ProjectRoot
+
+	// and extract the documents that the walker finds
 	return extractDocuments(ctx, db, fs, func(filePathsCh chan string) error {
-		query := `
-			SELECT filepath FROM raw_documents WHERE current_task = $task
-		`
-		bindings := map[string]any{
-			"task": taskID,
+		for _, fp := range files {
+			rel, err := filepath.Rel(root, fp)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			// send the single filepath to the channel
+			select {
+			case filePathsCh <- rel:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 
-		return db.StepQuery(ctx, query, bindings, func(search *sqlite.Stmt) {
-			select {
-			case filePathsCh <- search.ColumnText(0):
-			case <-ctx.Done():
-			}
-		})
+		return nil
 	})
 }
 
@@ -124,6 +133,7 @@ func extractDocuments[PluginConfig any](
 		procWG.Add(1)
 		go func() {
 			defer procWG.Done()
+
 			// read from filePathsCh until it is closed.
 			for {
 				select {
@@ -152,7 +162,7 @@ func extractDocuments[PluginConfig any](
 		}
 		defer db.Put(conn)
 
-		// prepare the insert statements.
+		// prepare the necessary statements.
 		insertRawStatement, err := conn.Prepare(
 			"INSERT INTO raw_documents (filepath, content, offset_column, offset_line) VALUES ($filepath, $content, $column, $row)",
 		)
@@ -161,6 +171,25 @@ func extractDocuments[PluginConfig any](
 			return nil
 		}
 		defer insertRawStatement.Finalize()
+
+		deleteRawDocument, err := conn.Prepare(`
+      DELETE FROM raw_documents WHERE id = $id
+    `)
+		if err != nil {
+			errs.Append(plugins.WrapError(fmt.Errorf("failed to prepare statement: %w", err)))
+			return nil
+		}
+		defer deleteRawDocument.Finalize()
+
+		rawDocumentSearch, err := conn.Prepare(
+			`SELECT id, content, filepath, offset_line, offset_column from raw_documents`,
+		)
+		if err != nil {
+			errs.Append(plugins.WrapError(fmt.Errorf("failed to prepare statement: %w", err)))
+			return nil
+		}
+		defer rawDocumentSearch.Finalize()
+
 		insertComponentField, err := conn.Prepare(
 			"INSERT INTO component_fields (document, prop, inline, type_field) VALUES ($document, $prop, true, $type_field)",
 		)
@@ -170,8 +199,47 @@ func extractDocuments[PluginConfig any](
 		}
 		defer insertComponentField.Finalize()
 
+		// before we start consuming new documents let's look at the current state of the raw_documents table
+		// and build up a mapping from filepath -> content -> id
+		// if there are entries left in this mapping then we need to delete the IDs
+		type KnownDoc struct {
+			Content string
+			Row     int64
+			Column  int64
+		}
+		unknown := map[string]map[KnownDoc]int64{}
+		db.StepStatement(ctx, rawDocumentSearch, func() {
+			filepath := rawDocumentSearch.GetText("filepath")
+			id := rawDocumentSearch.GetInt64("id")
+			doc := KnownDoc{
+				Content: rawDocumentSearch.GetText("content"),
+				Row:     rawDocumentSearch.GetInt64("offset_line"),
+				Column:  rawDocumentSearch.GetInt64("offset_column"),
+			}
+
+			if _, ok := unknown[filepath]; !ok {
+				unknown[filepath] = map[KnownDoc]int64{}
+			}
+
+			unknown[filepath][doc] = id
+		})
+
 		// consume discovered documents from resultsCh and write them to the database.
 		for doc := range resultsCh {
+			// we discovered a document, remove it from the list of unknowns
+			if _, ok := unknown[doc.FilePath]; ok {
+				docID := KnownDoc{
+					Content: doc.Content,
+					Row:     int64(doc.OffsetRow),
+					Column:  int64(doc.OffsetColumn),
+				}
+				// if we already know the document, we can skip it
+				if _, ok := unknown[doc.FilePath][docID]; ok {
+					delete(unknown[doc.FilePath], docID)
+					continue
+				}
+			}
+
 			err := db.ExecStatement(insertRawStatement, map[string]any{
 				"filepath": doc.FilePath,
 				"content":  doc.Content,

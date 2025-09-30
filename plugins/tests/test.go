@@ -115,7 +115,8 @@ CREATE TABLE raw_documents (
     offset_column INTEGER,
     filepath TEXT NOT NULL,
     content TEXT NOT NULL,
-    current_task TEXT
+    current_task TEXT,
+    loaded_with TEXT
 );
 
 -----------------------------------------------------------
@@ -135,10 +136,13 @@ CREATE TABLE type_fields (
     parent TEXT NOT NULL, -- will be User
     name TEXT NOT NULL,
     type TEXT NOT NULL,
-	type_modifiers TEXT,
+	  type_modifiers TEXT,
     default_value TEXT,
     description TEXT,
-	internal BOOLEAN default false,
+	  internal BOOLEAN default false,
+    document INT,
+
+    FOREIGN KEY (document) REFERENCES raw_documents(id) ON DELETE CASCADE,
     FOREIGN KEY (parent) REFERENCES types(name) DEFERRABLE INITIALLY DEFERRED,
     FOREIGN KEY (type) REFERENCES types(name) DEFERRABLE INITIALLY DEFERRED,
     UNIQUE (parent, name)
@@ -242,6 +246,15 @@ CREATE TABLE discovered_lists (
     FOREIGN KEY (node) REFERENCES selections(id) DEFERRABLE INITIALLY DEFERRED,
     FOREIGN KEY (node_type) REFERENCES types(name) DEFERRABLE INITIALLY DEFERRED
     FOREIGN KEY (raw_document) REFERENCES raw_documents(id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE document_dependencies (
+  document INTEGER NOT NULL,
+  depends_on TEXT NOT NULL,
+
+  FOREIGN KEY (document) REFERENCES documents(id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (depends_on) REFERENCES documents(name) DEFERRABLE INITIALLY DEFERRED,
+  UNIQUE (document, depends_on)
 );
 
 -----------------------------------------------------------

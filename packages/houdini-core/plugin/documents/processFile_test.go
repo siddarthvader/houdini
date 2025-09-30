@@ -4,8 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"code.houdinigraphql.com/packages/houdini-core/plugin/documents"
 	"github.com/spf13/afero"
+
+	"code.houdinigraphql.com/packages/houdini-core/plugin/documents"
 )
 
 // location holds expected row and column.
@@ -334,6 +335,9 @@ export default function CF_A_UserAvatar({ user }: Props) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// we need to set an environment variable so that our database pooling doesn't share information across tests
+			t.Setenv("HOUDINI_TEST", "true")
+
 			// Create an in‑memory filesystem.
 			fs := afero.NewMemMapFs()
 			filePath := "/testfile.txt"
@@ -372,14 +376,26 @@ export default function CF_A_UserAvatar({ user }: Props) {
 				}
 				for i, exp := range tc.expected {
 					if normalDocs[i].Content != exp {
-						t.Errorf("document %d: expected content %q, got %q", i, exp, normalDocs[i].Content)
+						t.Errorf(
+							"document %d: expected content %q, got %q",
+							i,
+							exp,
+							normalDocs[i].Content,
+						)
 					}
 					// If expectedLocations were provided, check row and column.
 					if len(tc.expectedLocations) > i {
 						expLoc := tc.expectedLocations[i]
-						if normalDocs[i].OffsetRow != expLoc.Row || normalDocs[i].OffsetColumn != expLoc.Col {
-							t.Errorf("document %d: expected location row %d, col %d, got row %d, col %d",
-								i, expLoc.Row, expLoc.Col, normalDocs[i].OffsetRow, normalDocs[i].OffsetColumn)
+						if normalDocs[i].OffsetRow != expLoc.Row ||
+							normalDocs[i].OffsetColumn != expLoc.Col {
+							t.Errorf(
+								"document %d: expected location row %d, col %d, got row %d, col %d",
+								i,
+								expLoc.Row,
+								expLoc.Col,
+								normalDocs[i].OffsetRow,
+								normalDocs[i].OffsetColumn,
+							)
 						}
 					}
 				}
@@ -390,18 +406,39 @@ export default function CF_A_UserAvatar({ user }: Props) {
 			// Verify component field documents.
 			if len(tc.expectedComponentFields) > 0 {
 				if len(compDocs) != len(tc.expectedComponentFields) {
-					t.Fatalf("expected %d component field document(s), got %+v", len(tc.expectedComponentFields), compDocs)
+					t.Fatalf(
+						"expected %d component field document(s), got %+v",
+						len(tc.expectedComponentFields),
+						compDocs,
+					)
 				}
 				for i, exp := range tc.expectedComponentFields {
 					if compDocs[i].Content != exp.Query {
-						t.Errorf("component document %d: expected content %q, got %q", i, exp.Query, compDocs[i].Content)
+						t.Errorf(
+							"component document %d: expected content %q, got %q",
+							i,
+							exp.Query,
+							compDocs[i].Content,
+						)
 					}
 					if compDocs[i].Prop != exp.Prop {
-						t.Errorf("component document %d: expected prop %q, got %q", i, exp.Prop, compDocs[i].Prop)
+						t.Errorf(
+							"component document %d: expected prop %q, got %q",
+							i,
+							exp.Prop,
+							compDocs[i].Prop,
+						)
 					}
-					if compDocs[i].OffsetRow != exp.ExpectedRow || compDocs[i].OffsetColumn != exp.ExpectedColumn {
-						t.Errorf("component document %d: expected location row %d, col %d, got row %d, col %d",
-							i, exp.ExpectedRow, exp.ExpectedColumn, compDocs[i].OffsetRow, compDocs[i].OffsetColumn)
+					if compDocs[i].OffsetRow != exp.ExpectedRow ||
+						compDocs[i].OffsetColumn != exp.ExpectedColumn {
+						t.Errorf(
+							"component document %d: expected location row %d, col %d, got row %d, col %d",
+							i,
+							exp.ExpectedRow,
+							exp.ExpectedColumn,
+							compDocs[i].OffsetRow,
+							compDocs[i].OffsetColumn,
+						)
 					}
 				}
 			} else if len(compDocs) != 0 {

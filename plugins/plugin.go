@@ -71,7 +71,7 @@ type AfterLoad interface {
 
 /* Extract documents from the project */
 type ExtractDocuments interface {
-	ExtractDocuments(ctx context.Context) error
+	ExtractDocuments(ctx context.Context, input ExtractDocumentsInput) error
 }
 
 /* AfterExtract is called after all documents have been extracted from the project. */
@@ -129,7 +129,7 @@ type IndexFile interface {
 
 /* A hook to generate custom files for every document in a project. */
 type Generate interface {
-	Generate(ctx context.Context) error
+	Generate(ctx context.Context) ([]string, error)
 }
 
 /* A hook to modify the generated artifact before it is persisted */

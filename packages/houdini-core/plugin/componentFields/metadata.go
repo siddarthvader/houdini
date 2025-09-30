@@ -176,7 +176,14 @@ func WriteMetadata[PluginConfig any](
 	defer typesStmt.Finalize()
 
 	// Prepare a statement to check for conflicts in type_fields.
-	tfStmt, err := conn.Prepare(`SELECT COUNT(*) FROM type_fields WHERE id = ?`)
+	tfStmt, err := conn.Prepare(`
+    SELECT COUNT(*) 
+    FROM type_fields 
+      LEFT JOIN component_fields ON type_fields.id = component_fields.type_field
+      LEFT JOIN documents on component_fields.document = documents.id
+      LEFT JOIN raw_documents on documents.raw_document = raw_documents.id
+    WHERE type_fields.id = ? AND (component_fields.id IS NULL OR filepath != ?)
+  `)
 	if err != nil {
 		errs.Append(plugins.WrapError(err))
 		return
@@ -240,6 +247,7 @@ func WriteMetadata[PluginConfig any](
 			continue
 		}
 		tfStmt.BindText(1, candidateID)
+		tfStmt.BindText(2, rec.Filepath) // exclude self
 		if _, err := tfStmt.Step(); err != nil {
 			errs.Append(plugins.WrapError(err))
 			continue
@@ -248,9 +256,8 @@ func WriteMetadata[PluginConfig any](
 		if count > 0 {
 			errs.Append(&plugins.Error{
 				Message: fmt.Sprintf(
-					"Component field '%s' (prop %q) on type %q conflicts with an existing type field",
+					"Component field '%s' on type %q conflicts with an existing type field",
 					rec.Field,
-					rec.Prop,
 					rec.Type,
 				),
 				Kind: plugins.ErrorKindValidation,
@@ -283,6 +290,44 @@ func WriteMetadata[PluginConfig any](
 		return
 	}
 
+	// we only want to insert the rows if we haven't seen the field before
+	fieldExistence, err := conn.Prepare(`
+    SELECT COUNT(*) 
+    FROM type_fields   WHERE type_fields.id = ?
+  `)
+	if err != nil {
+		errs.Append(plugins.WrapError(err))
+		return
+	}
+	defer fieldExistence.Finalize()
+
+	deleteTypeField, err := conn.Prepare(`
+    DELETE FROM type_fields WHERE type_fields.id = ?
+  `)
+	if err != nil {
+		errs.Append(plugins.WrapError(err))
+		return
+	}
+	defer deleteTypeField.Finalize()
+
+	deleteComponetField, err := conn.Prepare(`
+    DELETE FROM component_fields WHERE component_fields.type_field = ?
+  `)
+	if err != nil {
+		errs.Append(plugins.WrapError(err))
+		return
+	}
+	defer deleteComponetField.Finalize()
+
+	deleteTypeFieldArgs, err := conn.Prepare(`
+    DELETE FROM type_field_arguments WHERE field = ?
+  `)
+	if err != nil {
+		errs.Append(plugins.WrapError(err))
+		return
+	}
+	defer deleteTypeFieldArgs.Finalize()
+
 	// Prepare statements to insert (or upsert) component fields and internal type fields.
 	insertComponentField, err := conn.Prepare(`
 		INSERT INTO component_fields
@@ -303,7 +348,7 @@ func WriteMetadata[PluginConfig any](
 	defer insertComponentField.Finalize()
 
 	insertInternalField, err := conn.Prepare(`
-		INSERT INTO type_fields (id, parent, name, type, internal) VALUES ($id, $parent, $name, $type, true)
+		INSERT INTO type_fields (id, parent, name, type, internal, document) VALUES ($id, $parent, $name, $type, true, $document)
 	`)
 	if err != nil {
 		errs.Append(&plugins.Error{
@@ -330,6 +375,49 @@ func WriteMetadata[PluginConfig any](
 
 	// Process the collected component field data.
 	for _, data := range documentInfo {
+		// check if we already know the field
+		if err = fieldExistence.Reset(); err != nil {
+			errs.Append(plugins.WrapError(err))
+			continue
+		}
+		fieldExistence.BindText(1, fmt.Sprintf("%s.%s", data.Type, data.Field))
+
+		if _, err = fieldExistence.Step(); err != nil {
+			errs.Append(plugins.WrapError(err))
+			continue
+		}
+		count := fieldExistence.ColumnInt(0)
+
+		if count > 0 {
+			if err = deleteTypeField.Reset(); err != nil {
+				errs.Append(plugins.WrapError(err))
+				continue
+			}
+			deleteTypeField.BindText(1, fmt.Sprintf("%s.%s", data.Type, data.Field))
+			if _, err = deleteTypeField.Step(); err != nil {
+				errs.Append(plugins.WrapError(err))
+				continue
+			}
+			if err = deleteComponetField.Reset(); err != nil {
+				errs.Append(plugins.WrapError(err))
+				continue
+			}
+			deleteComponetField.BindText(1, fmt.Sprintf("%s.%s", data.Type, data.Field))
+			if _, err = deleteComponetField.Step(); err != nil {
+				errs.Append(plugins.WrapError(err))
+				continue
+			}
+			if err = deleteTypeFieldArgs.Reset(); err != nil {
+				errs.Append(plugins.WrapError(err))
+				continue
+			}
+			deleteTypeFieldArgs.BindText(1, fmt.Sprintf("%s.%s", data.Type, data.Field))
+			if _, err = deleteTypeFieldArgs.Step(); err != nil {
+				errs.Append(plugins.WrapError(err))
+				continue
+			}
+		}
+
 		err = db.ExecStatement(insertComponentField, map[string]any{
 			"document":   data.RawDocumentID,
 			"prop":       data.Prop,
@@ -343,10 +431,11 @@ func WriteMetadata[PluginConfig any](
 			continue
 		}
 		err = db.ExecStatement(insertInternalField, map[string]any{
-			"id":     fmt.Sprintf("%s.%s", data.Type, data.Field),
-			"parent": data.Type,
-			"name":   data.Field,
-			"type":   "Component",
+			"id":       fmt.Sprintf("%s.%s", data.Type, data.Field),
+			"parent":   data.Type,
+			"name":     data.Field,
+			"type":     "Component",
+			"document": data.RawDocumentID,
 		})
 		if err != nil {
 			errs.Append(plugins.WrapError(err))

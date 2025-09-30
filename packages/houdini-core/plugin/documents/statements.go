@@ -5,6 +5,7 @@ import "zombiezen.com/go/sqlite"
 type DocumentInsertStatements struct {
 	InsertDocument                          *sqlite.Stmt
 	InsertDocumentVariable                  *sqlite.Stmt
+	UpdateLoadedWith                        *sqlite.Stmt
 	InsertDocumentVariableDirective         *sqlite.Stmt
 	InsertDocumentVariableDirectiveArgument *sqlite.Stmt
 	InsertSelection                         *sqlite.Stmt
@@ -21,6 +22,12 @@ type DocumentInsertStatements struct {
 func PrepareDocumentInsertStatements(conn *sqlite.Conn) (DocumentInsertStatements, error, func()) {
 	insertDocument, err := conn.Prepare(
 		"INSERT INTO documents (name, raw_document, kind, type_condition) VALUES ($name, $raw_document, $kind, $type_condition)",
+	)
+	if err != nil {
+		return DocumentInsertStatements{}, err, nil
+	}
+	updateLoadedWith, err := conn.Prepare(
+		"UPDATE raw_documents SET loaded_with = $loaded_with WHERE id = $id",
 	)
 	if err != nil {
 		return DocumentInsertStatements{}, err, nil
@@ -99,6 +106,7 @@ func PrepareDocumentInsertStatements(conn *sqlite.Conn) (DocumentInsertStatement
 	}
 
 	finalize := func() {
+		updateLoadedWith.Finalize()
 		insertDocument.Finalize()
 		insertDocumentVariable.Finalize()
 		insertSelection.Finalize()
@@ -128,5 +136,6 @@ func PrepareDocumentInsertStatements(conn *sqlite.Conn) (DocumentInsertStatement
 		InsertSelectionDirectiveArgument:        insertSelectionDirectiveArgument,
 		InsertDocumentDirective:                 insertDocumentDirective,
 		InsertDocumentDirectiveArgument:         insertDocumentDirectiveArgument,
+		UpdateLoadedWith:                        updateLoadedWith,
 	}, nil, finalize
 }

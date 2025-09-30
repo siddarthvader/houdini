@@ -66,6 +66,8 @@ func Transform[PluginConfig any](ctx context.Context, db plugins.DatabasePool[Pl
 
 	// avoid circular references
 	processedFragments := &syncmap.Map{}
+	// mutex to ensure atomic check-and-set operations for fragment processing
+	var fragmentMutex sync.Mutex
 
 	// we want to process the documents in parallel
 	var wg sync.WaitGroup
@@ -110,7 +112,7 @@ func Transform[PluginConfig any](ctx context.Context, db plugins.DatabasePool[Pl
 
 					// wrap the processing in transaction
 					commit := sqlitex.Transaction(conn)
-					err = processDocument(ctx, db, conn, statements, doc.DocID, doc.Scope, processedFragments)
+					err = processDocument(ctx, db, conn, statements, doc.DocID, doc.Scope, processedFragments, &fragmentMutex)
 					commit(&err)
 					if err != nil {
 						errs.Append(plugins.WrapError(err))
@@ -190,6 +192,7 @@ func processDocument[PluginConfig any](
 	documentID int64,
 	scope map[string]int64,
 	processedFragments *syncmap.Map,
+	fragmentMutex *sync.Mutex,
 ) error {
 	// the first thing we have to do is apply any variables that show up in the
 	// document and set any that aren't defined in the provided scope to a null value
@@ -240,14 +243,71 @@ func processDocument[PluginConfig any](
 	newFragments := map[string]FragmentSpec{}
 
 	// now we have to walk through the document and replace any fragment spreads that have @with
-	err = db.BindStatement(
-		statements.WithSpreadsInDocument,
-		map[string]any{"document": documentID},
-	)
+	//
+	// NOTE: We create a fresh statement here instead of using the prepared statement from
+	// statements.WithSpreadsInDocument to avoid SQLite parameter retention issues.
+	//
+	// This query is extremely complex (multiple JOINs, GROUP BY, JSON aggregations) and
+	// SQLite's query planner can retain internal state when parameters are cleared and
+	// rebound. The systemic parameter clearing fix works for simpler queries, but this
+	// query's complexity causes the planner to cache execution plans based on NULL values
+	// from parameter clearing, leading to incorrect results on subsequent executions.
+	//
+	// Fresh statements ensure each execution starts with a completely clean slate,
+	// avoiding any query planner state retention issues. This is the only query in the
+	// codebase complex enough to require this approach.
+	withSearch, err := conn.Prepare(`
+	    SELECT
+	      parent_doc.name as document,
+	      selection_refs.id as selection_ref,
+	      selections.id as selection_id,
+	      selections.field_name as fragment,
+	      fragment_doc.id as fragment_doc_id,
+	      json_group_array(
+	        json_object(
+	          'name', selection_directive_arguments."name",
+	          'value', selection_directive_arguments."value",
+	          'kind', selection_arg_values.kind,
+	          'raw', selection_arg_values.raw
+	        )
+	      ) as with_args,
+	      CASE
+	        WHEN document_variables.name IS NULL THEN NULL
+	        ELSE
+	          json_group_array(
+	            json_object(
+	              'name', document_variables."name",
+	              'default_value', document_variables."default_value",
+	              'raw', document_variable_default_values."raw"
+	            )
+	          )
+	      END as doc_variables,
+	      fragment_doc.type_condition as type_condition,
+	      fragment_doc.raw_document as raw_document,
+	      selections.fragment_ref as fragment_ref
+	    FROM selection_directives
+	      JOIN selections ON selection_directives.selection_id = selections.id
+	      JOIN selection_refs ON selection_refs.child_id = selections.id
+	      JOIN selection_directive_arguments ON selection_directives.id = selection_directive_arguments.parent AND selection_directive_arguments.document = $document
+	      JOIN argument_values as selection_arg_values ON selection_directive_arguments."value" = selection_arg_values.id AND selection_arg_values.document = $document
+	      JOIN documents as parent_doc ON selection_refs."document" = parent_doc.id
+	      JOIN documents as fragment_doc on selections.field_name = fragment_doc.name
+	      LEFT JOIN document_variables on fragment_doc.id = document_variables."document"
+	      LEFT JOIN argument_values as document_variable_default_values on document_variable_default_values.id = document_variables.default_value
+	    WHERE selection_directives.directive = $with_directive
+	    	AND selection_refs."document" = $document
+	    GROUP BY selection_directives.id, parent_doc.id
+	`)
 	if err != nil {
 		return err
 	}
-	withSearch := statements.WithSpreadsInDocument
+
+	withSearch.SetText("$with_directive", schema.WithDirective)
+	err = db.BindStatement(withSearch, map[string]any{"document": documentID})
+	if err != nil {
+		return err
+	}
+
 	err = db.StepStatement(ctx, withSearch, func() {
 		selectionID := withSearch.GetInt64("selection_id")
 		fragmentDocID := withSearch.GetInt64("fragment_doc_id")
@@ -256,6 +316,7 @@ func processDocument[PluginConfig any](
 		docVariablesStr := withSearch.GetText("doc_variables")
 		typeCondition := withSearch.GetText("type_condition")
 		rawDocument := withSearch.GetInt64("raw_document")
+		fragmentRef := withSearch.GetText("fragment_ref")
 
 		withArgs := []struct {
 			Name  string `json:"name"`
@@ -320,7 +381,58 @@ func processDocument[PluginConfig any](
 			errs.Append(plugins.WrapError(err))
 			return
 		}
-		newFragmentName := fragmentName + "_" + murmurHash(string(args))
+		hash := murmurHash(string(args))
+		newFragmentName := fragmentName + "_" + hash
+
+		// if the selection has already been transformed, don't transfor it again
+		expectedName := fragmentRef + "_" + hash
+		if fragmentName == expectedName {
+			return
+		}
+
+		// check if we've already processed this fragment to avoid duplicates
+		// use database-based check instead of in-memory map to handle multiple transform runs,
+		// multiple processes, and server restarts where in-memory state would be lost
+		fragmentMutex.Lock()
+
+		// check if a document with this name already exists in the database
+		checkStmt, err := conn.Prepare("SELECT id FROM documents WHERE name = $name AND kind = 'fragment'")
+		if err != nil {
+			fragmentMutex.Unlock()
+			errs.Append(plugins.WrapError(err))
+			return
+		}
+		checkStmt.SetText("$name", newFragmentName)
+
+		hasExisting, err := checkStmt.Step()
+		if err != nil {
+			checkStmt.Finalize()
+			fragmentMutex.Unlock()
+			errs.Append(plugins.WrapError(err))
+			return
+		}
+
+		if hasExisting {
+			checkStmt.Finalize()
+			fragmentMutex.Unlock()
+
+			// fragment already exists, just update the selection to point to it
+			err = db.ExecStatement(statements.UpdateSelectionFieldName, map[string]any{
+				"selection_id": selectionID,
+				"field_name":   newFragmentName,
+				"fragment_ref": fragmentName,
+			})
+			if err != nil {
+				errs.Append(plugins.WrapError(err))
+			}
+			return
+		}
+
+		checkStmt.Finalize()
+		// fragment doesn't exist, we can proceed with creation (still holding the lock)
+		// mark in memory map to avoid duplicates within this transform run
+		processedFragments.Store(newFragmentName, true)
+		fragmentMutex.Unlock()
 
 		// clone the fragment document with the new name
 		fragmentID, fragmentScope, err := cloneDocument(
@@ -338,6 +450,8 @@ func processDocument[PluginConfig any](
 			errs.Append(plugins.WrapError(err))
 			return
 		}
+
+		// fragment is already marked as processed above
 
 		// store the fragment and its scope
 		newFragments[newFragmentName] = FragmentSpec{
@@ -357,6 +471,10 @@ func processDocument[PluginConfig any](
 			return
 		}
 	})
+
+	// Finalize the fresh statement
+	withSearch.Finalize()
+
 	// propagate any errors
 	if err != nil {
 		return err
@@ -367,15 +485,8 @@ func processDocument[PluginConfig any](
 
 	// now we can process every fragment that we ran into
 	for _, fragment := range newFragments {
-		// if we've seeen the fragment already skip it
-		if _, ok := processedFragments.Load(fragment.Name); ok {
-			continue
-		}
-
-		// don't process the fragment again
-		processedFragments.Store(fragment.Name, true)
-
-		// process the fragment
+		// the fragment should already be marked as processed when it was created
+		// but we still need to process it recursively for any nested @with directives
 		err = processDocument(
 			ctx,
 			db,
@@ -384,6 +495,7 @@ func processDocument[PluginConfig any](
 			fragment.ID,
 			fragment.Scope,
 			processedFragments,
+			fragmentMutex,
 		)
 		if err != nil {
 			errs.Append(plugins.WrapError(err))
@@ -989,7 +1101,8 @@ func prepareTransformStatements[PluginConfig any](
           ) 
       END as doc_variables,
       fragment_doc.type_condition as type_condition,
-      fragment_doc.raw_document as raw_document
+      fragment_doc.raw_document as raw_document,
+      selections.fragment_ref as fragment_ref
     FROM selection_directives
       JOIN selections ON selection_directives.selection_id = selections.id
       JOIN selection_refs ON selection_refs.child_id = selections.id
@@ -1000,7 +1113,7 @@ func prepareTransformStatements[PluginConfig any](
       LEFT JOIN document_variables on fragment_doc.id = document_variables."document"
       LEFT JOIN argument_values as document_variable_default_values on document_variable_default_values.id = document_variables.default_value
     WHERE selection_directives.directive = $with_directive
-      AND selections.kind = 'fragment'
+      -- AND selections.kind = 'fragment'
     	AND selection_refs."document" = $document
     GROUP BY selection_directives.id, parent_doc.id
   `)

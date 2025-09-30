@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
+	"strings"
 
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
@@ -16,6 +16,7 @@ type DatabasePool[PluginConfig any] struct {
 	_config       *ProjectConfig
 	_pluginConfig *PluginConfig
 	*sqlitex.Pool
+	Test bool
 }
 
 func (db *DatabasePool[PluginConfig]) SetProjectConfig(config ProjectConfig) {
@@ -37,7 +38,7 @@ func NewPool[PluginConfig any]() (DatabasePool[PluginConfig], error) {
 	return DatabasePool[PluginConfig]{Pool: pool}, nil
 }
 
-func NewPoolInMemory[PluginConfig any]() (DatabasePool[PluginConfig], error) {
+func NewTestPool[PluginConfig any]() (DatabasePool[PluginConfig], error) {
 	pool, err := sqlitex.NewPool("file:shared?mode=memory&cache=shared", sqlitex.PoolOptions{
 		Flags: sqlite.OpenWAL | sqlite.OpenReadWrite | sqlite.OpenMemory | sqlite.OpenURI,
 	})
@@ -45,7 +46,7 @@ func NewPoolInMemory[PluginConfig any]() (DatabasePool[PluginConfig], error) {
 		return DatabasePool[PluginConfig]{}, err
 	}
 
-	return DatabasePool[PluginConfig]{Pool: pool}, nil
+	return DatabasePool[PluginConfig]{Pool: pool, Test: true}, nil
 }
 
 func (db DatabasePool[PluginConfig]) ExecStatement(
@@ -64,6 +65,12 @@ func (db DatabasePool[PluginConfig]) ExecStatement(
 		return err
 	}
 	if err := statement.ClearBindings(); err != nil {
+		return err
+	}
+
+	// Clear all named parameters to prevent state retention between executions
+	// ClearBindings() only clears numbered parameters, not named ones set via SetText()
+	if err := clearAllNamedParameters(statement); err != nil {
 		return err
 	}
 
@@ -94,11 +101,27 @@ func (db DatabasePool[PluginConfig]) BindStatement(stmt *sqlite.Stmt, args map[s
 
 // our wrapper over take needs to time out after 10 seconds
 func (db DatabasePool[PluginConfig]) Take(ctx context.Context) (*sqlite.Conn, error) {
-	ctx, _ = context.WithTimeout(ctx, 10*time.Second)
-
 	conn, err := db.Pool.Take(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	if !db.Test {
+		for _, pragma := range []string{
+			"PRAGMA journal_mode = WAL",
+			"PRAGMA synchronous = off",
+			"PRAGMA cache_size = 10000",
+			"PRAGMA temp_store = memory",
+			"PRAGMA busy_timeout = 5000",
+			"PRAGMA foreign_key = ON",
+			"PRAGMA defer_foreign_keys = ON",
+		} {
+			stmt, _, err := conn.PrepareTransient(pragma)
+			if err != nil {
+				return nil, err
+			}
+			db.ExecStatement(stmt, map[string]any{})
+		}
 	}
 
 	return conn, nil
@@ -140,19 +163,23 @@ func (db DatabasePool[PluginConfig]) StepQuery(
 	}
 
 	// if there is a $task_id binding, we need to bind it
-	if taskID := TaskIDFromContext(ctx); taskID != nil {
-		for i := 0; i < query.BindParamCount(); i++ {
-			name := query.BindParamName(i)
-			if name == "$task_id" {
-				query.SetText("$task_id", *taskID)
-				break
-			}
-		}
-	}
+	bindTaskID(ctx, query)
 
 	return db.StepStatement(ctx, query, func() {
 		rowHandler(query)
 	})
+}
+
+func bindTaskID(ctx context.Context, statement *sqlite.Stmt) {
+	taskID := TaskIDFromContext(ctx)
+	if taskID != nil {
+		for i := range statement.BindParamCount() {
+			if statement.BindParamName(i+1) == "$task_id" {
+				statement.SetInt64("$task_id", *taskID)
+				break
+			}
+		}
+	}
 }
 
 func (db DatabasePool[PluginConfig]) StepStatement(
@@ -161,15 +188,7 @@ func (db DatabasePool[PluginConfig]) StepStatement(
 	rowHandler func(),
 ) error {
 	// if there is a $task_id binding, we need to bind it
-	if taskID := TaskIDFromContext(ctx); taskID != nil {
-		for i := 0; i < queryStatement.BindParamCount(); i++ {
-			name := queryStatement.BindParamName(i)
-			if name == "$task_id" {
-				queryStatement.SetText("$task_id", *taskID)
-				break
-			}
-		}
-	}
+	bindTaskID(ctx, queryStatement)
 
 	for {
 		select {
@@ -195,5 +214,29 @@ func (db DatabasePool[PluginConfig]) StepStatement(
 		return err
 	}
 
+	// Clear all named parameters to prevent state retention between executions
+	// ClearBindings() only clears numbered parameters, not named ones set via SetText()
+	if err := clearAllNamedParameters(queryStatement); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// clearAllNamedParameters clears named parameter bindings on a statement, except for
+// parameters that are intended to be persistent across executions.
+// This addresses a SQLite behavior where named parameters set via SetText() are not
+// cleared by ClearBindings(), causing state retention between statement executions.
+func clearAllNamedParameters(statement *sqlite.Stmt) error {
+	// Iterate through all parameters and clear non-persistent ones
+	for i := range statement.BindParamCount() {
+		paramName := statement.BindParamName(i + 1)
+		if paramName != "" && paramName != "$task_id" &&
+			!strings.HasSuffix(paramName, "directive") {
+			// Set the parameter to NULL to clear any previous binding
+			// This ensures that non-persistent named parameters don't retain values between executions
+			statement.SetNull(paramName)
+		}
+	}
 	return nil
 }
