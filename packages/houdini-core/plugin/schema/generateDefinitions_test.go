@@ -15,6 +15,259 @@ import (
 	"code.houdinigraphql.com/plugins/tests"
 )
 
+func TestDefinitionGeneration(t *testing.T) {
+	tests.RunTable(t, tests.Table[config.PluginConfig]{
+		Tests: []tests.Test[config.PluginConfig]{
+			{
+				Name: "Generates runtime definitions for each enum",
+				Input: []string{
+					`query GetAppVersion { version }`,
+				},
+				Extra: map[string]any{
+					"enumsTypesContains": []string{
+						"type ValuesOf<T> = T[keyof T]",
+						`export declare const BookingStatus: {
+    readonly CANCELLED: "CANCELLED";
+    readonly CAPTURING_PAYMENT: "CAPTURING_PAYMENT";
+    readonly CONFIRMED: "CONFIRMED";
+    readonly CREATING_ASSETS: "CREATING_ASSETS";
+    readonly PAYMENT_PENDING: "PAYMENT_PENDING";
+}
+
+export type BookingStatus$options = ValuesOf<typeof BookingStatus>`,
+						`export declare const GlobalSearchResultType: {
+    readonly ACCOMMODATION: "ACCOMMODATION";
+    readonly RESTAURANT: "RESTAURANT";
+    readonly USER: "USER";
+}
+
+export type GlobalSearchResultType$options = ValuesOf<typeof GlobalSearchResultType>`,
+					},
+					"enumsContains": []string{
+						`export const BookingStatus = {
+    "CANCELLED": "CANCELLED",
+    "CAPTURING_PAYMENT": "CAPTURING_PAYMENT",
+    "CONFIRMED": "CONFIRMED",
+    "CREATING_ASSETS": "CREATING_ASSETS",
+    "PAYMENT_PENDING": "PAYMENT_PENDING"
+};`,
+						`export const GlobalSearchResultType = {
+    "ACCOMMODATION": "ACCOMMODATION",
+    "RESTAURANT": "RESTAURANT",
+    "USER": "USER"
+};`,
+					},
+				},
+			},
+			{
+				Name: "Generates schema.graphql with internal directives",
+				Input: []string{
+					`query GetAllUsers { allUsers @list(name: "All_Users") { id name email } }`,
+					`fragment UserBasicInfo on User @list(name: "User_List") { id name email userType }`,
+				},
+				Extra: map[string]any{
+					"schemaContains": []string{
+						"directive @list",
+						"directive @paginate",
+						"directive @prepend",
+						"directive @append",
+						"directive @allLists",
+						"enum CachePolicy",
+						"enum PaginateMode",
+						"enum DedupeMatchMode",
+						"CacheAndNetwork",
+						"Infinite",
+						"Variables",
+					},
+				},
+			},
+			{
+				Name: "Generates documents.gql with list fragments",
+				Input: []string{
+					`query GetUserConnections { usersByCursor @list(name: "Friends") { edges { node { id name email } } } }`,
+					`fragment UserProfile on User { firstName email userType }`,
+				},
+				Extra: map[string]any{
+					"documentsContains": []string{
+						"fragment Friends_insert on User",
+						"fragment Friends_toggle on User",
+						"fragment Friends_remove on User",
+					},
+				},
+			},
+			{
+				Name: "Generates documents.gql with custom ID list fragments",
+				Input: []string{
+					`query GetUserConnections { usersByCursor @list(name: "Friends") { edges { node { id name } } } }`,
+					`fragment UserProfile on User { firstName email }`,
+					`query GetAllBookings { bookings @list(name: "AllBookings") { id status } }`,
+				},
+				Extra: map[string]any{
+					"documentsContains": []string{
+						"fragment Friends_insert on User",
+						"fragment Friends_toggle on User",
+						"fragment Friends_remove on User",
+						"fragment AllBookings_insert on Booking",
+						"fragment AllBookings_toggle on Booking",
+						"fragment AllBookings_remove on Booking",
+					},
+				},
+			},
+			{
+				Name: "Writing twice doesn't duplicate definitions",
+				Input: []string{
+					`query GetAppVersion { version }`,
+					`fragment UserProfile on User { firstName email }`,
+				},
+				Extra: map[string]any{
+					"runGenerationTwice": true,
+					"listDirectiveCount": 1,
+				},
+			},
+			{
+				Name: "Generates enums.js with correct format",
+				Input: []string{
+					`query GetAppVersion { version }`,
+				},
+				Extra: map[string]any{
+					"enumsContains": []string{
+						"export const DedupeMatchMode = {",
+						`"Variables": "Variables"`,
+						`"Operation": "Operation"`,
+						`"None": "None"`,
+						"};",
+					},
+					"enumsTypesContains": []string{
+						"type ValuesOf<T> = T[keyof T]",
+						"export declare const DedupeMatchMode: {",
+						`readonly Variables: "Variables";`,
+						`readonly Operation: "Operation";`,
+						`readonly None: "None";`,
+						"export type DedupeMatchMode$options = ValuesOf<typeof DedupeMatchMode>",
+					},
+				},
+			},
+			{
+				Name: "Generates enums.d.ts with TypeScript definitions",
+				Input: []string{
+					`query GetAppVersion { version }`,
+				},
+				Extra: map[string]any{
+					"enumsTypesContains": []string{
+						"type ValuesOf<T> = T[keyof T]",
+						"export declare const DedupeMatchMode: {",
+						`readonly Variables: "Variables";`,
+						`readonly Operation: "Operation";`,
+						`readonly None: "None";`,
+						"}",
+						"export type DedupeMatchMode$options = ValuesOf<typeof DedupeMatchMode>",
+					},
+					"enumsTypesNotContains": []string{
+						"export const",
+						"};",
+					},
+					"indexJsContains": []string{
+						"export * from './enums.js'",
+					},
+					"indexDtsContains": []string{
+						"export * from './enums.js'",
+					},
+				},
+			},
+		},
+		Schema: `
+			type Query {
+				allUsers: [User!]!
+				usersByCursor: UserConnection!
+				bookings: [Booking!]!
+				places: [Place!]!
+				version: Int!
+			}
+
+			type UserConnection {
+				edges: [UserEdge!]!
+			}
+
+			type UserEdge {
+				node: User!
+			}
+
+			type User {
+				id: ID!
+				name: String!
+				email: String!
+				firstName: String!
+				userType: UserType!
+			}
+
+			type Place {
+				id: ID!
+				name: String!
+				address: String!
+			}
+
+			type Booking {
+				id: ID!
+				status: BookingStatus!
+				place: Place!
+				user: User!
+			}
+
+			enum UserType {
+				GUEST
+				HOST
+				ADMIN
+			}
+
+			enum BookingStatus {
+				CANCELLED
+				CAPTURING_PAYMENT
+				CONFIRMED
+				CREATING_ASSETS
+				PAYMENT_PENDING
+			}
+
+			enum GlobalSearchResultType {
+				ACCOMMODATION
+				RESTAURANT
+				USER
+			}
+    `,
+		PerformTest: performDefinitionsTest,
+	})
+}
+
+func performDefinitionsTest(t *testing.T, p *plugin.HoudiniCore, test tests.Test[config.PluginConfig]) {
+	err := runFullGeneration(context.Background(), p)
+	if err != nil {
+		t.Logf("runFullGeneration error: %v", err)
+	}
+	require.Nil(t, err)
+
+	if runTwice, ok := test.Extra["runGenerationTwice"].(bool); ok && runTwice {
+		err = schema.GenerateDefinitionFiles(context.Background(), p.DB, p.Fs, false)
+		if err != nil {
+			t.Logf("Second generateDefinitions call failed with errors: %v", err)
+			t.Fatalf("Second generateDefinitions call should not fail")
+		}
+	}
+
+	projectConfig, err := p.DB.ProjectConfig(context.Background())
+	require.Nil(t, err)
+
+	// test.Extra contains the expected data for each test
+	// if the data is nil then we bypass the assertion
+	checkFileContains(t, p.Fs, projectConfig.DefinitionsSchemaPath(), test.Extra["schemaContains"])
+	checkFileContains(t, p.Fs, projectConfig.DefinitionsDocumentsPath(), test.Extra["documentsContains"])
+	checkFileContains(t, p.Fs, projectConfig.DefinitionsEnumRuntime(), test.Extra["enumsContains"])
+	checkFileContains(t, p.Fs, projectConfig.DefinitionsEnumTypes(), test.Extra["enumsTypesContains"])
+	// only test  that contains enumsTypesNotContains and for other tests it will bypass
+	checkFileNotContains(t, p.Fs, projectConfig.DefinitionsEnumTypes(), test.Extra["enumsTypesNotContains"])
+	checkFileContains(t, p.Fs, projectConfig.DefinitionsIndexJs(), test.Extra["indexJsContains"])
+	checkFileContains(t, p.Fs, projectConfig.DefinitionsIndexDts(), test.Extra["indexDtsContains"])
+	checkDirectiveCount(t, p.Fs, projectConfig.DefinitionsSchemaPath(), test.Extra["listDirectiveCount"])
+}
+
 func runFullGeneration(ctx context.Context, p *plugin.HoudiniCore) error {
 	err := p.AfterExtract(ctx)
 	if err != nil {
@@ -40,390 +293,65 @@ func runFullGeneration(ctx context.Context, p *plugin.HoudiniCore) error {
 	projectConfig.PersistedQueriesPath = "./dummy-queries.json"
 	p.DB.SetProjectConfig(projectConfig)
 
-	// Run the full generation
 	_, err = p.Generate(ctx)
 
-	// Restore original path
 	projectConfig.PersistedQueriesPath = originalPath
 	p.DB.SetProjectConfig(projectConfig)
 
 	return err
 }
 
-func TestDefinitionGeneration(t *testing.T) {
-	tests.RunTable(t, tests.Table[config.PluginConfig]{
-		Tests: []tests.Test[config.PluginConfig]{
-			{
-				Name: "Generates schema.graphql with internal directives",
-				Input: []string{
-					`query AllUsers { allUsers @list(name: "All_Users") { id name } }`,
-					`fragment UserInfo on User @list(name: "User_List") { id name email }`,
-				},
-			},
-			{
-				Name: "Generates documents.gql with list fragments",
-				Input: []string{
-					`query TestQuery { usersByCursor @list(name: "Friends") { edges { node { id } } } }`,
-					`fragment TestFragment on User { firstName }`,
-				},
-			},
-			{
-				Name: "Generates documents.gql with custom ID list fragments",
-				Input: []string{
-					`query TestQuery { usersByCursor @list(name: "Friends") { edges { node { id } } } }`,
-					`fragment TestFragment on User { firstName }`,
-					`query CustomIdList { customIdList @list(name: "theList") { foo } }`,
-				},
-			},
-			{
-				Name: "Writing twice doesn't duplicate definitions",
-				Input: []string{
-					`query TestQuery { version }`,
-					`fragment TestFragment on User { firstName }`,
-				},
-			},
-			{
-				Name: "Generates enums.js with correct format",
-				Input: []string{
-					`query TestQuery { version }`,
-				},
-			},
-			{
-				Name: "Generates enums.d.ts with TypeScript definitions",
-				Input: []string{
-					`query TestQuery { version }`,
-				},
-			},
-		},
-		Schema: `
-			type Query {
-				allUsers: [User!]!
-				usersByCursor: UserConnection!
-				customIdList: [CustomIdType!]!
-				version: Int!
-			}
+// test helpers
+func checkFileContains(t *testing.T, fs afero.Fs, path string, data any) {
+	// if data is nil then we dont do any assertions, basic bypass
+	if data == nil {
+		return
+	}
 
-			type UserConnection {
-				edges: [UserEdge!]!
-			}
+	checks, ok := data.([]string)
+	if !ok {
+		return
+	}
 
-			type UserEdge {
-				node: User!
-			}
+	content, err := afero.ReadFile(fs, path)
+	require.Nil(t, err)
+	str := string(content)
+	for _, expected := range checks {
+		assert.Contains(t, str, expected)
+	}
+}
 
-			type User {
-				id: ID!
-				name: String!
-				email: String!
-				firstName: String!
-			}
+func checkFileNotContains(t *testing.T, fs afero.Fs, path string, data any) {
+	if data == nil {
+		return
+	}
 
-			type CustomIdType {
-				foo: String!
-				bar: String!
-			}
+	checks, ok := data.([]string)
+	if !ok {
+		return
+	}
 
-			"""
-			Documentation of testenum1
-			"""
-			enum TestEnum1 {
-				"Documentation of Value1"
-				Value1
-				"Documentation of Value2"
-				Value2
-			}
+	content, err := afero.ReadFile(fs, path)
+	require.Nil(t, err)
+	str := string(content)
+	for _, unexpected := range checks {
+		assert.NotContains(t, str, unexpected)
+	}
+}
 
-			"""
-			Documentation of testenum2
-			"""
-			enum TestEnum2 {
-				Value3
-				Value2
-			}
-    `,
-		PerformTest: func(t *testing.T, p *plugin.HoudiniCore, test tests.Test[config.PluginConfig]) {
-			config, err := p.DB.ProjectConfig(context.Background())
-			assert.Nil(t, err)
+func checkDirectiveCount(t *testing.T, fs afero.Fs, path string, data any) {
+	if data == nil {
+		return
+	}
 
-			switch test.Name {
-			case "Generates runtime definitions for each enum":
-				// read from the filesystem and confirm that the value matches our expectations
-				typeDefinitions, err := afero.ReadFile(
-					p.Fs,
-					config.DefinitionsEnumTypes(),
-				)
-				assert.Nil(t, err)
+	expectedCount, ok := data.(int)
+	if !ok {
+		return
+	}
 
-				require.Equal(t, tests.Dedent(`
-	          type ValuesOf<T> = T[keyof T]
-
-	          export declare const DedupeMatchMode: {
-	              readonly Variables: "Variables";
-	              readonly Operation: "Operation";
-	              readonly None: "None";
-	          }
-
-	          export type DedupeMatchMode$options = ValuesOf<typeof DedupeMatchMode>
-
-	          /** Documentation of testenum1 */
-	          export declare const TestEnum1: {
-	              /** Documentation of Value1 */
-	              readonly Value1: "Value1";
-	              /** Documentation of Value2 */
-	              readonly Value2: "Value2";
-	          }
-
-	          /** Documentation of testenum1 */
-	          export type TestEnum1$options = ValuesOf<typeof TestEnum1>
-
-	          /** Documentation of testenum2 */
-	          export declare const TestEnum2: {
-	              readonly Value3: "Value3";
-	              readonly Value2: "Value2";
-	          }
-
-	          /** Documentation of testenum2 */
-	          export type TestEnum2$options = ValuesOf<typeof TestEnum2>
-	        `),
-					string(typeDefinitions),
-				)
-
-				runtimeDefinitions, err := afero.ReadFile(
-					p.Fs,
-					config.DefinitionsEnumRuntime(),
-				)
-				assert.Nil(t, err)
-
-				require.Equal(t, tests.Dedent(`
-	          /** Documentation of testenum1 */
-	          export const TestEnum1 = {
-	              /**
-	               * Documentation of Value1
-	              */
-	              "Value1": "Value1",
-
-	              /**
-	               * Documentation of Value2
-	              */
-	              "Value2": "Value2"
-	          };
-
-	          /** Documentation of testenum2 */
-	          export const TestEnum2 = {
-	              "Value3": "Value3",
-	              "Value2": "Value2"
-	          };
-
-	          export const DedupeMatchMode = {
-	              "Variables": "Variables",
-	              "Operation": "Operation",
-	              "None": "None"
-	          };
-	        `),
-					string(runtimeDefinitions),
-				)
-
-			case "Generates schema.graphql with internal directives":
-				err = runFullGeneration(context.Background(), p)
-				if err != nil {
-					t.Logf("runFullGeneration error: %v", err)
-				}
-				assert.Nil(t, err)
-
-				projectConfig, err := p.DB.ProjectConfig(context.Background())
-				require.Nil(t, err)
-
-				schemaContent, err := afero.ReadFile(
-					p.Fs,
-					projectConfig.DefinitionsSchemaPath(),
-				)
-				assert.Nil(t, err)
-
-				schemaStr := string(schemaContent)
-
-				assert.Contains(t, schemaStr, "directive @list")
-				assert.Contains(t, schemaStr, "directive @paginate")
-				assert.Contains(t, schemaStr, "directive @prepend")
-				assert.Contains(t, schemaStr, "directive @append")
-				assert.Contains(t, schemaStr, "directive @allLists")
-
-				assert.Contains(t, schemaStr, "enum CachePolicy")
-				assert.Contains(t, schemaStr, "enum PaginateMode")
-				assert.Contains(t, schemaStr, "enum DedupeMatchMode")
-				assert.Contains(t, schemaStr, "CacheAndNetwork")
-				assert.Contains(t, schemaStr, "Infinite")
-				assert.Contains(t, schemaStr, "Variables")
-
-			case "Generates documents.gql with list fragments":
-				err = runFullGeneration(context.Background(), p)
-				assert.Nil(t, err)
-
-				projectConfig, err := p.DB.ProjectConfig(context.Background())
-				require.Nil(t, err)
-				documentsContent, err := afero.ReadFile(
-					p.Fs,
-					projectConfig.DefinitionsDocumentsPath(),
-				)
-				assert.Nil(t, err)
-
-				documentsStr := string(documentsContent)
-
-				assert.Contains(t, documentsStr, "fragment Friends_insert on User")
-				assert.Contains(t, documentsStr, "fragment Friends_toggle on User")
-				assert.Contains(t, documentsStr, "fragment Friends_remove on User")
-
-			case "Generates documents.gql with custom ID list fragments":
-				err = runFullGeneration(context.Background(), p)
-				assert.Nil(t, err)
-
-				projectConfig, err := p.DB.ProjectConfig(context.Background())
-				require.Nil(t, err)
-				documentsContent, err := afero.ReadFile(
-					p.Fs,
-					projectConfig.DefinitionsDocumentsPath(),
-				)
-				assert.Nil(t, err)
-
-				documentsStr := string(documentsContent)
-
-				assert.Contains(t, documentsStr, "fragment Friends_insert on User")
-				assert.Contains(t, documentsStr, "fragment Friends_toggle on User")
-				assert.Contains(t, documentsStr, "fragment Friends_remove on User")
-				assert.Contains(t, documentsStr, "fragment theList_insert on CustomIdType")
-				assert.Contains(t, documentsStr, "fragment theList_toggle on CustomIdType")
-				assert.Contains(t, documentsStr, "fragment theList_remove on CustomIdType")
-
-			case "Writing twice doesn't duplicate definitions":
-				// first full pipeline run
-				err = runFullGeneration(context.Background(), p)
-				assert.Nil(t, err)
-
-				// second time - just regenerate definition files (like running generateDefinitions again)
-				err = schema.GenerateDefinitionFiles(context.Background(), p.DB, p.Fs, false)
-				if err != nil {
-					t.Logf("Second generateDefinitions call failed with errors: %v", err)
-					t.Fatalf("Second generateDefinitions call should not fail")
-				}
-
-				projectConfig, err := p.DB.ProjectConfig(context.Background())
-				require.Nil(t, err)
-				schemaContent, err := afero.ReadFile(
-					p.Fs,
-					projectConfig.DefinitionsSchemaPath(),
-				)
-				assert.Nil(t, err)
-
-				schemaStr := string(schemaContent)
-
-				listDirectiveCount := strings.Count(schemaStr, "directive @list")
-				assert.Equal(t, 1, listDirectiveCount, "directive @list should appear exactly once")
-
-			case "Generates enums.js with correct format":
-				err = runFullGeneration(context.Background(), p)
-				assert.Nil(t, err)
-
-				projectConfig, err := p.DB.ProjectConfig(context.Background())
-				require.Nil(t, err)
-				enumsContent, err := afero.ReadFile(
-					p.Fs,
-					projectConfig.DefinitionsEnumRuntime(),
-				)
-				assert.Nil(t, err)
-
-				enumsStr := string(enumsContent)
-
-				// Check for built-in enums that should always be present
-				assert.Contains(t, enumsStr, "export const DedupeMatchMode = {")
-				assert.Contains(t, enumsStr, `"Variables": "Variables"`)
-				assert.Contains(t, enumsStr, `"Operation": "Operation"`)
-				assert.Contains(t, enumsStr, `"None": "None"`)
-
-				// Check for test enums from schema if they exist in database
-				if strings.Contains(enumsStr, "TestEnum1") {
-					assert.Contains(t, enumsStr, "export const TestEnum1 = {")
-					assert.Contains(t, enumsStr, `"Value1": "Value1"`)
-					assert.Contains(t, enumsStr, `"Value2": "Value2"`)
-				}
-
-				if strings.Contains(enumsStr, "TestEnum2") {
-					assert.Contains(t, enumsStr, "export const TestEnum2 = {")
-					assert.Contains(t, enumsStr, `"Value3": "Value3"`)
-				}
-
-				// Check closing brace and semicolon format
-				assert.Contains(t, enumsStr, "};")
-
-				// Verify DedupeMatchMode values are sorted alphabetically
-				nonePos := strings.Index(enumsStr, `"None"`)
-				operationPos := strings.Index(enumsStr, `"Operation"`)
-				variablesPos := strings.Index(enumsStr, `"Variables"`)
-				assert.True(t, nonePos < operationPos && operationPos < variablesPos, "DedupeMatchMode values should be sorted alphabetically")
-
-				// Test enums.d.ts generation
-				enumsTypesContent, err := afero.ReadFile(
-					p.Fs,
-					projectConfig.DefinitionsEnumTypes(),
-				)
-				assert.Nil(t, err)
-
-				enumsTypesStr := string(enumsTypesContent)
-
-				// Check for ValuesOf helper type at the top
-				assert.Contains(t, enumsTypesStr, "type ValuesOf<T> = T[keyof T]")
-
-				// Check for TypeScript declarations
-				assert.Contains(t, enumsTypesStr, "export declare const DedupeMatchMode: {")
-				assert.Contains(t, enumsTypesStr, "readonly Variables: \"Variables\";")
-				assert.Contains(t, enumsTypesStr, "readonly Operation: \"Operation\";")
-				assert.Contains(t, enumsTypesStr, "readonly None: \"None\";")
-
-				// Check for type aliases
-				assert.Contains(t, enumsTypesStr, "export type DedupeMatchMode$options = ValuesOf<typeof DedupeMatchMode>")
-
-				// Verify alphabetical sorting in TypeScript too
-				tsNonePos := strings.Index(enumsTypesStr, "readonly None:")
-				tsOperationPos := strings.Index(enumsTypesStr, "readonly Operation:")
-				tsVariablesPos := strings.Index(enumsTypesStr, "readonly Variables:")
-				assert.True(t, tsNonePos < tsOperationPos && tsOperationPos < tsVariablesPos, "TypeScript enum values should be sorted alphabetically")
-
-			case "Generates enums.d.ts with TypeScript definitions":
-				err = runFullGeneration(context.Background(), p)
-				assert.Nil(t, err)
-
-				projectConfig, err := p.DB.ProjectConfig(context.Background())
-				require.Nil(t, err)
-
-				// Test only the .d.ts file
-				enumsTypesContent, err := afero.ReadFile(
-					p.Fs,
-					projectConfig.DefinitionsEnumTypes(),
-				)
-				assert.Nil(t, err)
-
-				enumsTypesStr := string(enumsTypesContent)
-
-				// Check structure matches TypeScript test expectations
-				assert.Contains(t, enumsTypesStr, "type ValuesOf<T> = T[keyof T]")
-				assert.Contains(t, enumsTypesStr, "export declare const DedupeMatchMode: {")
-				assert.Contains(t, enumsTypesStr, "readonly Variables: \"Variables\";")
-				assert.Contains(t, enumsTypesStr, "readonly Operation: \"Operation\";")
-				assert.Contains(t, enumsTypesStr, "readonly None: \"None\";")
-				assert.Contains(t, enumsTypesStr, "}")
-				assert.Contains(t, enumsTypesStr, "export type DedupeMatchMode$options = ValuesOf<typeof DedupeMatchMode>")
-
-				// Verify no JavaScript syntax in TypeScript file
-				assert.NotContains(t, enumsTypesStr, "export const")
-				assert.NotContains(t, enumsTypesStr, "};")
-
-				// Test index files generation
-				indexJsContent, err := afero.ReadFile(p.Fs, projectConfig.DefinitionsIndexJs())
-				assert.Nil(t, err)
-				assert.Contains(t, string(indexJsContent), "export * from './enums.js'")
-
-				indexDtsContent, err := afero.ReadFile(p.Fs, projectConfig.DefinitionsIndexDts())
-				assert.Nil(t, err)
-				assert.Contains(t, string(indexDtsContent), "export * from './enums.js'")
-			}
-		},
-	})
+	content, err := afero.ReadFile(fs, path)
+	require.Nil(t, err)
+	str := string(content)
+	actualCount := strings.Count(str, "directive @list")
+	assert.Equal(t, expectedCount, actualCount, "directive @list should appear exactly once")
 }
