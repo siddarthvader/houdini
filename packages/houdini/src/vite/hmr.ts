@@ -1,17 +1,9 @@
 import fs from 'node:fs/promises'
 import type { DatabaseSync } from 'node:sqlite'
-import type { Plugin as VitePlugin, UserConfig, ModuleNode, HmrContext } from 'vite'
+import type { Plugin as VitePlugin, ModuleNode, HmrContext } from 'vite'
 
-import type { PluginConfig } from '.'
-import {
-	codegen_setup,
-	type CompilerProxy,
-	connect_db,
-	get_config,
-	path,
-	run_pipeline,
-	type Config,
-} from '../lib'
+import type { PluginContext } from '.'
+import { codegen_setup, get_config, path, run_pipeline, type CompilerProxy } from '../lib'
 
 /**
  * Houdini Vite HMR Plugin
@@ -29,48 +21,27 @@ import {
  * the dependency graph to ensure all related documents are properly regenerated.
  */
 
-let config: Config
-let db: DatabaseSync
-let compiler: CompilerProxy
+export let compiler: CompilerProxy
 
-export default function (opts: PluginConfig = {}): VitePlugin {
+export function document_hmr(ctx: PluginContext): VitePlugin {
 	const debounceHmr = createDebounceHmr(50) // 50ms debounce window
 
 	return {
 		name: 'houdini',
 
-		// houdini will always act as a "meta framework" and process the user's code before it
-		// is processed by the user's library-specific plugins.
 		enforce: 'pre',
-
-		async config(userConfig, env) {
-			// add the necessary values for the houdini imports to resolve
-			let result: UserConfig = {
-				server: {
-					...userConfig.server,
-					fs: {
-						...userConfig.server?.fs,
-						allow: ['.'].concat(userConfig.server?.fs?.allow || []),
-					},
-				},
-			}
-
-			// we're done
-			return result
-		},
-
-		async configResolved() {
-			config = await get_config()
-		},
 
 		// this is called when the dev server starts
 		async configureServer(server) {
-			// we need a reference to the database connection
-			let dbFile: string
-			;[db, dbFile] = connect_db(config)
+			const config = await get_config()
 
 			// and a proxy to talk to the compiler
-			compiler = await codegen_setup(config, 'dev', db, dbFile)
+			compiler = await codegen_setup(config, 'dev', ctx.db, ctx.db_file)
+
+			// and make sure the compiler cleans up gracefully when the http server dies
+			server.httpServer?.once('close', () => {
+				compiler.close()
+			})
 
 			// before we can do anything we need to discover what documents exist on the filesystem
 			// we need to trigger validate in order to discover lists which might not appear in the normal JIT path
@@ -80,20 +51,16 @@ export default function (opts: PluginConfig = {}): VitePlugin {
 			} catch {}
 		},
 
-		async buildEnd() {
-			compiler?.close()
-		},
-
 		// this is called when a module is being resolved
 		async resolveId(id) {
 			// check if this is an artifact import
 			if (id.startsWith('$houdini/artifacts/')) {
 				const match = id.match(/^\$houdini\/artifacts\/(.+)$/)
 				const artifactName = match ? match[1] : null
-				if (artifactName && db && compiler) {
+				if (artifactName && ctx.db && compiler) {
 					try {
 						// ensure the artifact and its dependencies are generated
-						await ensureArtifactGenerated(artifactName, db, compiler)
+						await ensureArtifactGenerated(artifactName, ctx.db, compiler)
 					} catch (error) {
 						console.error(error)
 					}
@@ -104,8 +71,8 @@ export default function (opts: PluginConfig = {}): VitePlugin {
 		},
 
 		// this is called when a file is created or modified
-		async handleHotUpdate(ctx): Promise<void | ModuleNode[]> {
-			return debounceHmr(ctx, async function (files, task_id) {
+		async handleHotUpdate(hmr): Promise<void | ModuleNode[]> {
+			return debounceHmr(hmr, async function (files, task_id) {
 				// the first thing we need to do is look for all of the relevant files that have houdini dependencies
 				const filepaths: Array<string> = []
 				const relativePaths: Array<string> = []
@@ -115,7 +82,7 @@ export default function (opts: PluginConfig = {}): VitePlugin {
 						(filepath.endsWith('.gql') || content.includes('$houdini'))
 					) {
 						filepaths.push(filepath)
-						relativePaths.push(filepath.substring(ctx.server.config.root.length + 1))
+						relativePaths.push(filepath.substring(hmr.server.config.root.length + 1))
 					}
 				}
 				if (filepaths.length === 0) {
@@ -127,27 +94,32 @@ export default function (opts: PluginConfig = {}): VitePlugin {
 
 				// so let's just blow away any raw documents related to the changed files and then we'll call extract
 				const placeholders = relativePaths.map(() => '?').join(', ')
-				db.prepare(
-					`
+				ctx.db
+					.prepare(
+						`
             DELETE from raw_documents WHERE filepath IN (${placeholders})
         `
-				).run(...relativePaths)
+					)
+					.run(...relativePaths)
 
 				// we might have lost fragment variable expanded documents so look for any documents that
 				// have a fragment ref but no matching document and patch them up
-				db.prepare(
-					`
+				ctx.db
+					.prepare(
+						`
           UPDATE selections AS s
           SET field_name = s.fragment_ref
           WHERE s.fragment_ref IS NOT NULL
             AND s.kind = 'fragment'                              -- only fragment spreads
             AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.name = s.field_name)
           `
-				).run()
+					)
+					.run()
 
 				// clean up any dangling references
-				db.prepare(
-					`
+				ctx.db
+					.prepare(
+						`
             WITH orphan_selections AS (
               SELECT s.id
               FROM selections s
@@ -158,7 +130,8 @@ export default function (opts: PluginConfig = {}): VitePlugin {
             DELETE FROM selections
             WHERE id IN (SELECT id FROM orphan_selections)
           `
-				).run()
+					)
+					.run()
 
 				// tell the plugin to extract the filepaths
 				await compiler.trigger_hook('ExtractDocuments', {
@@ -166,11 +139,13 @@ export default function (opts: PluginConfig = {}): VitePlugin {
 				})
 
 				// make sure any documents that were extracted get included in the current task
-				const result = db
+				const result = ctx.db
 					.prepare(
 						`
-          UPDATE raw_documents SET current_task = ? WHERE filepath IN (${placeholders})
-        `
+              UPDATE raw_documents 
+                SET current_task = ? 
+              WHERE filepath IN (${placeholders})
+            `
 					)
 					.run(task_id, ...relativePaths)
 
@@ -188,8 +163,9 @@ export default function (opts: PluginConfig = {}): VitePlugin {
 				// now that all of the documents have been updated to their latest version we can
 				// walk the dependency graph and include any transient dependencys to the task
 				// aswell
-				db.prepare(
-					`
+				ctx.db
+					.prepare(
+						`
             WITH RECURSIVE
             -- 1) Seed: names of docs already in this task
             seed AS (
@@ -249,7 +225,8 @@ export default function (opts: PluginConfig = {}): VitePlugin {
             SET current_task = $task_id
             WHERE id IN (SELECT raw_id FROM targets);
           `
-				).run({ task_id: task_id })
+					)
+					.run({ task_id: task_id })
 
 				// the task now includes every document that we need to process
 				const results = await run_pipeline(compiler.trigger_hook, {
@@ -263,15 +240,15 @@ export default function (opts: PluginConfig = {}): VitePlugin {
 				).flat() as Array<string>
 
 				// and finally we can remove the task id association
-				db.prepare(
-					`UPDATE raw_documents SET current_task = NULL WHERE current_task = ?`
-				).run(task_id)
+				ctx.db
+					.prepare(`UPDATE raw_documents SET current_task = NULL WHERE current_task = ?`)
+					.run(task_id)
 
 				// invalidate all of the modules we generated
 				for (const module_path of updated_modules) {
-					const mod = ctx.server.moduleGraph.getModuleById(module_path)
+					const mod = hmr.server.moduleGraph.getModuleById(module_path)
 					if (mod) {
-						ctx.server.moduleGraph.invalidateModule(mod)
+						hmr.server.moduleGraph.invalidateModule(mod)
 					}
 				}
 			})
@@ -289,6 +266,8 @@ async function ensureArtifactGenerated(
 ): Promise<void> {
 	// before we do anything let's see if the artifact has been generated already
 	try {
+		const config = await get_config()
+
 		await fs.access(
 			path.join(config.root_dir, config.config_file.runtimeDir!, 'artifacts', artifactName),
 			fs.constants.R_OK
@@ -376,7 +355,7 @@ type BatchCallback = (
  * @param debounceMs - Debounce window in milliseconds
  * @returns debounceHmr function
  */
-function createDebounceHmr(debounceMs: number = 50) {
+export function createDebounceHmr(debounceMs: number = 50) {
 	let updateQueue = new Map<string, () => string | Promise<string>>()
 	let updateTimer: NodeJS.Timeout | null = null
 	let batchId = 0
