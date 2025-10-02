@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"zombiezen.com/go/sqlite/sqlitex"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
@@ -63,6 +64,36 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 		return fmt.Errorf("failed to marshal hooks: %w", err)
 	}
 
+	wsHooks := pluginWebsocketHooks(ctx, plugin)
+	wsHooksStr, err := json.Marshal(wsHooks)
+	if err != nil {
+		return fmt.Errorf("failed to marshal websocket hooks: %w", err)
+	}
+	log.Printf("WEBSOCKET_URL:%s\n", wsHooksStr)
+
+	// obtain a websocket upgrader
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+	//register WebSocket handler (new)
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Printf("WebSocket upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		log.Printf("WebSocket connection established from %s", r.RemoteAddr)
+
+		HandleWebSocketConnection(conn)
+
+		log.Printf("WebSocket connection closed from %s", r.RemoteAddr)
+	})
 	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
 		return err
