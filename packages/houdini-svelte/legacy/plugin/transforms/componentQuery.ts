@@ -1,4 +1,3 @@
-import { yellow } from '@kitql/helpers'
 import type {
 	ExpressionKind,
 	IdentifierKind,
@@ -152,9 +151,7 @@ export default async function QueryProcessor(config: Config, page: SvelteTransfo
 			) {
 				formatErrors({
 					filepath: page.filepath,
-					message: `Could not find required variable function: ${yellow(
-						variable_fn
-					)}. maybe its not exported? `,
+					message: `Could not find required variable function: ${variable_fn}. maybe its not exported? `,
 				})
 			}
 
