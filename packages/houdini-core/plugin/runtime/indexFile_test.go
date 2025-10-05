@@ -31,18 +31,30 @@ func TestIndexFileGeneration(t *testing.T) {
 			assert.Nil(t, err)
 
 			// read the index contents
-			contents, err := afero.ReadFile(plugin.Fs,
+			indexContent, err := afero.ReadFile(plugin.Fs,
 				path.Join(config.ProjectRoot, config.RuntimeDir, "index.js"),
 			)
 			require.Nil(t, err)
 
-			require.Equal(t, `
-export * from './runtime/client'
+			require.Equal(t, `export * from './runtime/client'
 export * from './runtime'
-export * from './graphql/index.js'
-export { default as TestFragment} from './artifacts/TestFragment.js'
-export { default as TestQuery} from './artifacts/TestQuery.js'
-`, string(contents))
+export * from './graphql'
+export { default as TestFragment } from './artifacts/TestFragment.js'
+export { default as TestQuery } from './artifacts/TestQuery.js'
+`, string(indexContent))
+
+			// read the type definition contents
+			indexDTsContent, err := afero.ReadFile(plugin.Fs,
+				path.Join(config.ProjectRoot, config.RuntimeDir, "index.d.ts"),
+			)
+			require.Nil(t, err)
+
+			require.Equal(t, `export * from './runtime/client'
+export * from './runtime'
+export * from './graphql'
+export * from './artifacts/TestFragment'
+export * from './artifacts/TestQuery'
+`, string(indexDTsContent))
 		},
 	})
 }

@@ -24,8 +24,14 @@ func GenerateIndexFile(
 	}
 
 	// we are going to populate the runtime index
-	targetPath := path.Join(config.ProjectRoot, config.RuntimeDir, "index.js")
-	definitionsRelative, err := filepath.Rel(config.RuntimeDir, config.DefinitionsIndexJs())
+	indexPath := path.Join(config.ProjectRoot, config.RuntimeDir, "index.js")
+	dTsPath := path.Join(config.ProjectRoot, config.RuntimeDir, "index.d.ts")
+
+	// delete both of the files to start fresh
+	_ = fs.Remove(indexPath)
+	_ = fs.Remove(dTsPath)
+
+	definitionsRelative, err := filepath.Rel(config.RuntimeDir, config.DefinitionsDirectory())
 	if err != nil {
 		return err
 	}
@@ -53,12 +59,17 @@ func GenerateIndexFile(
 	defer documentSearch.Finalize()
 
 	// generate an export for every document
-	docExports := []string{}
+	indexDocs := []string{}
+	dTsDocs := []string{}
 	err = db.StepStatement(ctx, documentSearch, func() {
 		name := documentSearch.GetText("name")
-		docExports = append(
-			docExports,
-			fmt.Sprintf("export { default as %s} from './artifacts/%s.js'", name, name),
+		indexDocs = append(
+			indexDocs,
+			fmt.Sprintf("export { default as %s } from './artifacts/%s.js'", name, name),
+		)
+		dTsDocs = append(
+			dTsDocs,
+			fmt.Sprintf("export * from './artifacts/%s'", name),
 		)
 	})
 	if err != nil {
@@ -85,33 +96,35 @@ func GenerateIndexFile(
 		return err
 	}
 
-	// build up the content of the file
-	content := fmt.Sprintf(`
-export * from './runtime/client'
+	// build up the indexContent of the file
+	indexContent := fmt.Sprintf(`export * from './runtime/client'
 export * from './runtime'
 export * from './%s'
 %s
 %s`,
 		definitionsRelative,
-		strings.Join(docExports, "\n"),
+		strings.Join(indexDocs, "\n"),
 		strings.Join(runtimeExport, "\n"),
 	)
 
-	// if the existing content is the same, then there's nothing to do
-	if exists, err := afero.Exists(fs, targetPath); err == nil && exists {
-		existingContent, err := afero.ReadFile(fs, targetPath)
-		if err != nil {
-			return err
-		}
-
-		if string(existingContent) == content {
-			// we're done
-			return nil
-		}
+	// if we got this far then we need to update the file
+	err = afero.WriteFile(fs, indexPath, []byte(indexContent), 0644)
+	if err != nil {
+		return err
 	}
 
+	dTsContent := fmt.Sprintf(`export * from './runtime/client'
+export * from './runtime'
+export * from './%s'
+%s
+%s`,
+		definitionsRelative,
+		strings.Join(dTsDocs, "\n"),
+		strings.Join(runtimeExport, "\n"),
+	)
+
 	// if we got this far then we need to update the file
-	err = afero.WriteFile(fs, targetPath, []byte(content), 0644)
+	err = afero.WriteFile(fs, dTsPath, []byte(dTsContent), 0644)
 	if err != nil {
 		return err
 	}
