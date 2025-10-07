@@ -3,6 +3,7 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"path"
 
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
@@ -30,6 +31,23 @@ type ProjectConfig struct {
 	RuntimeScalars                  map[string]string
 	Scalars                         map[string]ScalarConfig
 	TypeConfig                      map[string]TypeConfig
+	Filepath                        string
+}
+
+func (config ProjectConfig) PluginDirectory(name string) string {
+	return path.Join(config.ProjectRoot, config.RuntimeDir, "plugins", name)
+}
+
+func (config ProjectConfig) PluginRuntimeDirectory(name string) string {
+	// the core runtime goes into a special place
+	if name == "houdini-core" {
+		return path.Join(config.ProjectRoot, config.RuntimeDir, "runtime")
+	}
+	return path.Join(config.PluginDirectory(name), "runtime")
+}
+
+func (config ProjectConfig) PluginStaticRuntimeDirectory(name string) string {
+	return path.Join(config.PluginDirectory(name), "static")
 }
 
 func (db DatabasePool[PluginConfig]) ProjectConfig(ctx context.Context) (ProjectConfig, error) {
@@ -80,7 +98,8 @@ func (db *DatabasePool[PluginConfig]) ReloadProjectConfig(ctx context.Context) e
 		persisted_queries_path,
 		project_root,
 		runtime_dir,
-		schema_path
+		schema_path,
+		path
 	FROM config LIMIT 1`, &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			err := json.Unmarshal([]byte(stmt.ColumnText(0)), &config.Include)
@@ -111,6 +130,7 @@ func (db *DatabasePool[PluginConfig]) ReloadProjectConfig(ctx context.Context) e
 			config.ProjectRoot = stmt.ColumnText(15)
 			config.RuntimeDir = stmt.ColumnText(16)
 			config.SchemaPath = stmt.ColumnText(17)
+			config.Filepath = stmt.GetText("path")
 
 			// nothing went wrong
 			return nil
@@ -191,7 +211,9 @@ func (db *DatabasePool[PluginConfig]) ReloadProjectConfig(ctx context.Context) e
 	return nil
 }
 
-func (db DatabasePool[PluginConfig]) PluginConfig(ctx context.Context) (result PluginConfig, err error) {
+func (db DatabasePool[PluginConfig]) PluginConfig(
+	ctx context.Context,
+) (result PluginConfig, err error) {
 	// if we've already loaded the config use it
 	if db._pluginConfig != nil {
 		result = *db._pluginConfig

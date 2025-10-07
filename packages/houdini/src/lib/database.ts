@@ -11,7 +11,9 @@ CREATE TABLE IF NOT EXISTS plugins (
     hooks JSON NOT NULL,
     plugin_order TEXT NOT NULL CHECK (plugin_order IN ('before', 'after', 'core')),
     include_runtime TEXT,
-    config JSON
+    config JSON,
+	  config_module TEXT,
+		client_plugins JSON
 );
 
 -- Watch Schema Config
@@ -69,7 +71,8 @@ CREATE TABLE IF NOT EXISTS config (
     default_keys JSON,
     persisted_queries_path TEXT NOT NULL,
     project_root TEXT,
-    runtime_dir TEXT
+    runtime_dir TEXT,
+		path TEXT
 );
 
 CREATE TABLE IF NOT EXISTS scalar_config (
@@ -490,9 +493,10 @@ export async function write_config(
 			default_keys,
 			persisted_queries_path,
 			project_root,
-			runtime_dir
+			runtime_dir,
+      path
 		) VALUES (
-			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		)
 	`,
 	).run(
@@ -523,6 +527,7 @@ export async function write_config(
 			path.join(config_file.runtimeDir!, 'queries.json'),
 		config.root_dir ?? null,
 		config_file.runtimeDir ?? null,
+		config.filepath ?? null,
 	)
 
 	// write the scalar definitions

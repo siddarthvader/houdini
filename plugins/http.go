@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
+	"sort"
 )
 
 // the hooks that a plugin defines dictate a set of events that the plugin must repond to
@@ -14,108 +16,117 @@ func pluginHooks[PluginConfig any](
 	ctx context.Context,
 	plugin HoudiniPlugin[PluginConfig],
 ) []string {
-	hooks := map[string]bool{}
-	if _, ok := plugin.(StaticRuntime); ok {
-		hooks["AfterLoad"] = true
-		http.Handle("/afterload", InjectTaskID(EventHook(handleAfterLoad(plugin))))
+	hooks := map[string]struct{}{}
+	registered := map[string]struct{}{} // path -> registered
+
+	register := func(path, hookName string, cond bool, handler http.Handler) {
+		if !cond {
+			return
+		}
+		hooks[hookName] = struct{}{}
+		if _, ok := registered[path]; ok {
+			return
+		}
+		http.Handle(path, handler)
+		registered[path] = struct{}{}
 	}
-	if _, ok := plugin.(TransformRuntime); ok {
-		hooks["Generate"] = true
-		http.Handle("/generate", InjectTaskID(EventHookWithResponse(handleGenerate(plugin))))
-	}
-	if _, ok := plugin.(Config); ok {
-		hooks["Config"] = true
-		// TODO: support config hook
-	}
+
+	// --- AfterLoad is triggered for StaticRuntime OR AfterLoad
+	_, isStaticRuntime := plugin.(StaticRuntime)
+	_, isAfterLoad := plugin.(AfterLoad)
+	register("/afterload", "AfterLoad", isStaticRuntime || isAfterLoad,
+		InjectContext(EventHook(handleAfterLoad(plugin))))
+
+	// --- GenerateRuntime is triggered for IncludeRuntime OR GenerateRuntime
+	_, isIncludeRuntime := plugin.(IncludeRuntime)
+	_, isGenerateRuntime := plugin.(GenerateRuntime)
+	_, isConfig := plugin.(Config)
+	register(
+		"/generateruntime", "GenerateRuntime",
+		isIncludeRuntime || isGenerateRuntime || isConfig,
+		InjectContext(EventHookWithResponse(handleGenerateRuntime(plugin))),
+	)
+
+	// --- Environment
 	if p, ok := plugin.(Environment); ok {
-		hooks["Environment"] = true
-		http.Handle("/environment", InjectTaskID(handleEnvironment(ctx, p)))
+		register("/environment", "Environment", true,
+			InjectContext(handleEnvironment(ctx, p)))
 	}
-	if _, ok := plugin.(AfterLoad); ok {
-		hooks["AfterLoad"] = true
-		http.Handle("/afterload", InjectTaskID(EventHook(handleAfterLoad(plugin))))
-	}
+
+	// --- ExtractDocuments
 	if p, ok := plugin.(ExtractDocuments); ok {
-		hooks["ExtractDocuments"] = true
-		http.Handle(
-			"/extractdocuments",
-			InjectTaskID(EventHookWithInput(p.ExtractDocuments)),
-		)
+		register("/extractdocuments", "ExtractDocuments", true,
+			InjectContext(EventHookWithInput(p.ExtractDocuments)))
 	}
+
+	// --- AfterExtract
 	if p, ok := plugin.(AfterExtract); ok {
-		hooks["AfterExtract"] = true
-		http.Handle("/afterextract", InjectTaskID(EventHook(p.AfterExtract)))
+		register("/afterextract", "AfterExtract", true,
+			InjectContext(EventHook(p.AfterExtract)))
 	}
+
+	// --- Schema
 	if p, ok := plugin.(Schema); ok {
-		hooks["Schema"] = true
-		http.Handle("/schema", InjectTaskID(EventHook(p.Schema)))
+		register("/schema", "Schema", true,
+			InjectContext(EventHook(p.Schema)))
 	}
+
+	// --- BeforeValidate
 	if p, ok := plugin.(BeforeValidate); ok {
-		hooks["BeforeValidate"] = true
-		http.Handle("/beforevalidate", InjectTaskID(EventHook(p.BeforeValidate)))
+		register("/beforevalidate", "BeforeValidate", true,
+			InjectContext(EventHook(p.BeforeValidate)))
 	}
+
+	// --- Validate
 	if p, ok := plugin.(Validate); ok {
-		hooks["Validate"] = true
-		http.Handle("/validate", InjectTaskID(EventHook(p.Validate)))
+		register("/validate", "Validate", true,
+			InjectContext(EventHook(p.Validate)))
 	}
+
+	// --- AfterValidate
 	if p, ok := plugin.(AfterValidate); ok {
-		hooks["AfterValidate"] = true
-		http.Handle("/aftervalidate", InjectTaskID(EventHook(p.AfterValidate)))
-	}
-	if _, ok := plugin.(BeforeGenerate); ok {
-		hooks["BeforeGenerate"] = true
-		http.Handle("/beforegenerate", InjectTaskID(EventHook(handleBeforeGenerate(plugin))))
-	}
-	if _, ok := plugin.(Generate); ok {
-		hooks["Generate"] = true
-		http.Handle("/generate", InjectTaskID(EventHookWithResponse(handleGenerate(plugin))))
-	}
-	if _, ok := plugin.(ArtifactData); ok {
-		hooks["AfterGenerate"] = true
-		http.Handle("/aftergenerate", InjectTaskID(EventHook(handleAfterGenerate(plugin))))
-	}
-	if _, ok := plugin.(Hash); ok {
-		hooks["Hash"] = true
-		http.Handle("/aftergenerate", InjectTaskID(EventHook(handleBeforeGenerate(plugin))))
-	}
-	if _, ok := plugin.(GraphQLTagReturn); ok {
-		hooks["AfterGenerate"] = true
-		http.Handle("/aftergenerate", InjectTaskID(EventHook(handleAfterGenerate(plugin))))
-	}
-	if _, ok := plugin.(IndexFile); ok {
-		hooks["AfterGenerate"] = true
-		http.Handle("/aftergenerate", InjectTaskID(EventHook(handleAfterGenerate(plugin))))
-	}
-	if _, ok := plugin.(ArtifactEnd); ok {
-		hooks["AfterGenerate"] = true
-		http.Handle("/aftergenerate", InjectTaskID(EventHook(handleAfterGenerate(plugin))))
-	}
-	if p, ok := plugin.(ClientPlugins); ok {
-		hooks["ClientPlugins"] = true
-		http.Handle("/clientplugins", InjectTaskID(JSONHook(p.ClientPlugins)))
-	}
-	if p, ok := plugin.(TransformFile); ok {
-		hooks["TransformFile"] = true
-		http.Handle("/transformfile", InjectTaskID(handleTransformFile(p)))
+		register("/aftervalidate", "AfterValidate", true,
+			InjectContext(EventHook(p.AfterValidate)))
 	}
 
-	// get the unique hooks this plugin cares about
-	hookStrs := []string{}
-	for hook := range hooks {
-		hookStrs = append(hookStrs, hook)
+	// --- BeforeGenerate
+	if p, ok := plugin.(BeforeGenerate); ok {
+		register("/beforegenerate", "BeforeGenerate", true,
+			InjectContext(EventHook(p.BeforeGenerate)))
 	}
 
-	return hookStrs
+	// --- GenerateDocuments
+	if p, ok := plugin.(GenerateDocuments); ok {
+		register("/generatedocuments", "GenerateDocuments", true,
+			InjectContext(EventHookWithResponse(p.GenerateDocuments)))
+	}
+
+	// --- AfterGenerate
+	if p, ok := plugin.(AfterGenerate); ok {
+		register("/aftergenerate", "AfterGenerate", true,
+			InjectContext(EventHook(p.AfterGenerate)))
+	}
+
+	// return stable list
+	out := make([]string, 0, len(hooks))
+	for h := range hooks {
+		out = append(out, h)
+	}
+	sort.Strings(out)
+	return out
 }
 
-func InjectTaskID(next http.Handler) http.Handler {
+func InjectContext(next http.Handler) http.Handler {
 	// the task id is passed in the request headers
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// get the task id from the request headers
 		taskID := r.Header.Get("X-Task-ID")
 
 		// add the task id to the context
-		ctx := ContextWithTaskID(r.Context(), taskID)
+		ctx := ContextWithPluginDir(
+			ContextWithTaskID(r.Context(), taskID),
+			r.Header.Get("X-Plugin-Directory"),
+		)
 
 		// call the next handler
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -151,7 +162,9 @@ func EventHook(hook func(context.Context) error) http.Handler {
 	})
 }
 
-func EventHookWithResponse(hook func(context.Context) (any, error)) http.Handler {
+func EventHookWithResponse[Response any](
+	hook func(context.Context) (Response, error),
+) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// call the function
 		result, err := hook(r.Context())
@@ -195,23 +208,54 @@ type ExtractDocumentsInput struct {
 	Filepaths []string `json:"filepaths"`
 }
 
-func handleGenerate[PluginConfig any](
+func handleGenerateRuntime[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) (any, error) {
-	return func(ctx context.Context) (any, error) {
-		filepaths := []string{}
+) func(ctx context.Context) ([]string, error) {
+	return func(ctx context.Context) ([]string, error) {
+		paths := []string{}
 
-		// invoke the generate hook
-		if generate, ok := plugin.(Generate); ok {
-			fps, err := generate.Generate(ctx)
+		if generate, ok := plugin.(GenerateRuntime); ok {
+			filepaths, err := generate.GenerateRuntime(ctx)
 			if err != nil {
 				return nil, err
 			}
-			filepaths = append(filepaths, fps...)
+
+			paths = append(paths, filepaths...)
+		}
+
+		// if the plugin defines a runtime to be included then we should include it now
+		if includeRuntime, ok := plugin.(IncludeRuntime); ok {
+			runtimeDir, err := includeRuntime.IncludeRuntime(ctx)
+			if err != nil {
+				return nil, err
+			}
+
+			config, err := plugin.Database().ProjectConfig(ctx)
+			if err != nil {
+				return nil, err
+			}
+
+			runtimePath := path.Join(PluginDirFromContext(ctx), runtimeDir)
+			targetPath := config.PluginRuntimeDirectory(plugin.Name())
+
+			// the plugin could have defined a transform for the runtime
+			transform := func(ctx context.Context, source string, content string) (string, error) { return content, nil }
+			if transformer, ok := plugin.(TransformRuntime); ok {
+				transform = transformer.TransformRuntime
+			}
+
+			// copy the plugin runtime to the runtime directory
+			updated, err := RecursiveCopy(ctx, runtimePath, targetPath, transform)
+			if err != nil {
+				return nil, err
+			}
+
+			// add any updated paths to the list
+			paths = append(paths, updated...)
 		}
 
 		// nothing went wrong
-		return filepaths, nil
+		return paths, nil
 	}
 }
 
@@ -265,83 +309,6 @@ func handleEnvironment(ctx context.Context, plugin Environment) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(value)
 	})
-}
-
-func handleTransformFile(plugin TransformFile) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// the include and exclude paramters come as json in the request body
-		payload := struct {
-			Filename string `json:"filename"`
-			Source   string `json:"source"`
-		}{}
-		err := json.NewDecoder(r.Body).Decode(&payload)
-		if err != nil {
-			handleError(w, err)
-			return
-		}
-
-		// invoke the extraction logic
-		updated, err := plugin.TransformFile(r.Context(), payload.Filename, payload.Source)
-		if err != nil {
-			handleError(w, err)
-			return
-		}
-
-		// send the string back over the endpoint
-		result := map[string]string{
-			"result": updated,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(result)
-	})
-}
-
-func handleBeforeGenerate[PluginConfig any](
-	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) error {
-	return func(ctx context.Context) error {
-		// if the plugin defines a runtime to include
-		if _, ok := plugin.(BeforeGenerate); ok {
-			fmt.Println("generate generate")
-		}
-
-		if _, ok := plugin.(Hash); ok {
-			fmt.Println("hash")
-		}
-
-		// nothing went wrong
-		return nil
-	}
-}
-
-func handleAfterGenerate[PluginConfig any](
-	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) error {
-	return func(ctx context.Context) error {
-		// if the plugin defines a runtime to include
-		if _, ok := plugin.(ArtifactData); ok {
-			fmt.Println("artifact data")
-		}
-
-		if _, ok := plugin.(Hash); ok {
-			fmt.Println("hash")
-		}
-
-		if _, ok := plugin.(GraphQLTagReturn); ok {
-			fmt.Println("graphql tag return")
-		}
-
-		if _, ok := plugin.(IndexFile); ok {
-			fmt.Println("index file")
-		}
-
-		if _, ok := plugin.(ArtifactEnd); ok {
-			fmt.Println("artifact end")
-		}
-
-		// nothing went wrong
-		return nil
-	}
 }
 
 func handleError(w http.ResponseWriter, err error) {

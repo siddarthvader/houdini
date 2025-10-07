@@ -8,11 +8,12 @@ import type * as routerConventions from './conventions.js'
 import { create_schema, write_config } from './database.js'
 import { format_hook_error, type HookError } from './error.js'
 import * as fs from './fs.js'
-import { type Config } from './project.js'
+import type { Config } from './project.js'
 
 export type PluginSpec = {
 	name: string
 	port: number
+	directory: string
 	hooks: Set<string>
 	order: 'before' | 'after' | 'core'
 }
@@ -26,7 +27,9 @@ export type Adapter = ((args: {
 	manifest: ProjectManifest
 	adapterPath: string
 }) => void | Promise<void>) & {
-	includePaths?: Record<string, string> | ((args: { config: Config }) => Record<string, string>)
+	includePaths?:
+		| Record<string, string>
+		| ((args: { config: Config }) => Record<string, string>)
 	disableServer?: boolean
 	pre?: (args: {
 		config: Config
@@ -72,8 +75,8 @@ export async function init_db(config: Config): Promise<[DatabaseSync, string]> {
 export type CompilerProxy = {
 	close: () => Promise<void>
 	trigger_hook: (
-		name: string,
-		opts?: { parallel_safe?: boolean; payload?: {}; task_id?: string }
+		name: PipelineHook,
+		opts?: { parallel_safe?: boolean; payload?: {}; task_id?: string },
 	) => Promise<Record<string, any> | null>
 	database_path: string
 }
@@ -84,7 +87,7 @@ export async function codegen_setup(
 	config: Config,
 	mode: string,
 	db: DatabaseSync,
-	db_file: string
+	db_file: string,
 ): Promise<CompilerProxy> {
 	// We need the root dir before we get to the exciting stuff
 	await fs.mkdirpSync(houdini_root(config))
@@ -107,6 +110,7 @@ export async function codegen_setup(
 							port: number
 							hooks: string
 							plugin_order: string
+							config_module: string | null
 					  }
 					| undefined
 				if (row) {
@@ -115,8 +119,10 @@ export async function codegen_setup(
 
 					// update the plugin spec with the user provided config
 					db.prepare('UPDATE plugins set config = ? where name = ?').run(
-						JSON.stringify(config.plugins.find((p) => p.name === name)?.config ?? {}),
-						name
+						JSON.stringify(
+							config.plugins.find((p) => p.name === name)?.config ?? {},
+						),
+						name,
 					)
 
 					// create the plugin spec
@@ -125,10 +131,24 @@ export async function codegen_setup(
 						port: row.port,
 						hooks: new Set(JSON.parse(row.hooks)),
 						order: row.plugin_order as 'before' | 'after' | 'core',
+						directory:
+							config.plugins.find((p) => p.name === name)?.directory || '',
 					}
 
 					// store the spec
 					plugin_specs[name] = spec
+
+					// if the row specifies a config module then we need to import it and invoke it
+					if (row.config_module) {
+						import(row.config_module).then((module) => {
+							if (module && typeof module.default === 'function') {
+								config.config_file = module.default(config.config_file)
+							}
+							resolver(spec)
+						})
+					} else {
+						resolver(spec)
+					}
 
 					// resolve the promise
 					resolver(spec)
@@ -177,7 +197,7 @@ export async function codegen_setup(
 				...(await wait_for_plugin(plugin.name)),
 			}
 			console.timeEnd(`Spawn ${plugin.name}`)
-		})
+		}),
 	)
 	console.timeEnd('Start Plugins')
 
@@ -185,19 +205,23 @@ export async function codegen_setup(
 		name: string,
 		hook: string,
 		payload: Record<string, any> = {},
-		task_id?: string
+		task_id?: string,
 	) => {
-		const { port } = plugin_specs[name]
+		const { port, directory } = plugin_specs[name]
 
 		// make the request
-		const response = await fetch(`http://localhost:${port}/${hook.toLowerCase()}`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'X-Task-ID': task_id?.toString() ?? '',
+		const response = await fetch(
+			`http://localhost:${port}/${hook.toLowerCase()}`,
+			{
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-Task-ID': task_id?.toString() ?? '',
+					'X-Plugin-Directory': directory,
+				},
+				body: JSON.stringify(payload),
 			},
-			body: JSON.stringify(payload),
-		})
+		)
 
 		// if the request failed, throw an error
 		if (!response.ok) {
@@ -205,7 +229,9 @@ export async function codegen_setup(
 				throw new Error(`Plugin ${name} does not support hook ${hook}`)
 			}
 			const responseJSON = await response.json()
-			const errors: HookError[] = Array.isArray(responseJSON) ? responseJSON : [responseJSON]
+			const errors: HookError[] = Array.isArray(responseJSON)
+				? responseJSON
+				: [responseJSON]
 			errors.forEach((error) => {
 				format_hook_error(config.root_dir, error, name)
 			})
@@ -221,7 +247,7 @@ export async function codegen_setup(
 	}
 
 	const trigger_hook = async (
-		hook: string,
+		hook: PipelineHook,
 		{
 			parallel_safe,
 			payload,
@@ -230,12 +256,14 @@ export async function codegen_setup(
 			parallel_safe?: boolean
 			payload?: Record<string, any>
 			task_id?: string
-		} = {}
+		} = {},
 	) => {
 		const timeName = hook + (task_id ? ` (${task_id})` : '')
 		console.time(timeName)
 		// look for all of the plugins that have registered for this hook
-		const plugins = Object.entries(plugin_specs).filter(([, { hooks }]) => hooks.has(hook))
+		const plugins = Object.entries(plugin_specs).filter(([, { hooks }]) =>
+			hooks.has(hook),
+		)
 
 		const result: Record<string, any> = {}
 
@@ -244,7 +272,7 @@ export async function codegen_setup(
 			await Promise.all(
 				plugins.map(async ([plugin]) => {
 					result[plugin] = await invoke_hook(plugin, hook, payload, task_id)
-				})
+				}),
 			)
 		} else {
 			// if the hook isn't parallel safe, we need to run the plugins in order
@@ -302,7 +330,7 @@ export async function codegen_setup(
 							} catch (err) {}
 						}
 					}
-				})
+				}),
 			)
 		},
 	}
@@ -310,13 +338,18 @@ export async function codegen_setup(
 
 // Define the complete pipeline order
 const PIPELINE_HOOKS = [
+	'Config',
+	'AfterLoad',
+	'Schema',
 	'ExtractDocuments',
 	'AfterExtract',
 	'BeforeValidate',
 	'Validate',
 	'AfterValidate',
 	'BeforeGenerate',
-	'Generate',
+	'GenerateDocuments',
+	'GenerateRuntime',
+	'AfterGenerate',
 ] as const
 
 type PipelineHook = (typeof PIPELINE_HOOKS)[number]
@@ -329,7 +362,7 @@ export type RunPipelineOptions = {
 
 export async function run_pipeline(
 	trigger_hook: CompilerProxy['trigger_hook'],
-	options: RunPipelineOptions = {}
+	options: RunPipelineOptions = {},
 ): Promise<Record<PipelineHook, Record<string, any>>> {
 	const { task_id, after, through } = options
 	const results: Record<string, any> = {}

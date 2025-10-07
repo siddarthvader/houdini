@@ -4,33 +4,23 @@ import (
 	"context"
 	"path"
 
-	"github.com/spf13/afero"
-	"golang.org/x/sync/errgroup"
-
 	"code.houdinigraphql.com/packages/houdini-core/plugin/documents"
-	"code.houdinigraphql.com/packages/houdini-core/plugin/documents/artifacts"
 	"code.houdinigraphql.com/packages/houdini-core/plugin/runtime"
 	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"github.com/spf13/afero"
+	"golang.org/x/sync/errgroup"
 )
 
-func (p *HoudiniCore) Generate(ctx context.Context) ([]string, error) {
+func (p *HoudiniCore) GenerateRuntime(ctx context.Context) ([]string, error) {
 	config, err := p.DB.ProjectConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// we need to build up the filepaths that we generate in this time
-	generated := plugins.ThreadSafeSlice[string]{}
 
-	// the first thing to do is generate the artifacts
-	files, err := artifacts.Generate(ctx, p.DB, p.Fs, false)
-	if err != nil {
-		return nil, err
-	}
-	generated.Append(files...)
-
-	// by now, we have all of the necessary metadata written to the database to run the other generationsin parallel
 	g, ctx := errgroup.WithContext(ctx)
+
+	generated := plugins.ThreadSafeSlice[string]{}
 
 	// generate the documents file
 	g.Go(func() error {
@@ -52,6 +42,15 @@ func (p *HoudiniCore) Generate(ctx context.Context) ([]string, error) {
 		return nil
 	})
 
+	// generate the plugin index file
+	g.Go(func() error {
+		err = runtime.GeneratePluginIndex(ctx, p.DB, p.Fs)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	// generate the runtime index file
 	g.Go(func() error {
 		targetPath := path.Join(config.ProjectRoot, config.RuntimeDir, "index.js")
@@ -73,7 +72,7 @@ func (p *HoudiniCore) Generate(ctx context.Context) ([]string, error) {
 			}
 		}
 
-		err := runtime.GenerateIndexFile(ctx, p.DB, p.Fs)
+		err := runtime.GenerateRuntimeIndexFile(ctx, p.DB, p.Fs)
 		if err != nil {
 			return err
 		}
@@ -106,4 +105,22 @@ func (p *HoudiniCore) Generate(ctx context.Context) ([]string, error) {
 
 	// we're done
 	return generated.GetItems(), nil
+}
+
+func (p *HoudiniCore) IncludeRuntime(ctx context.Context) (string, error) {
+	return "runtime", nil
+}
+
+func (p *HoudiniCore) TransformRuntime(
+	ctx context.Context,
+	filepath string,
+	content string,
+) (string, error) {
+	// we need the project config to check for paths
+	config, err := p.DB.ProjectConfig(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	return runtime.TransformRuntime(ctx, p.DB, config, filepath, content)
 }
