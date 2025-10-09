@@ -12,6 +12,7 @@ import (
 	"zombiezen.com/go/sqlite"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
+	"code.houdinigraphql.com/packages/houdini-core/plugin/documents/collected"
 	"code.houdinigraphql.com/plugins"
 )
 
@@ -19,7 +20,7 @@ func EnsureDocumentsPrinted(
 	ctx context.Context,
 	db plugins.DatabasePool[config.PluginConfig],
 	conn *sqlite.Conn,
-	collectedDocuments *CollectedDocuments,
+	collectedDocuments *collected.Documents,
 	includeHidden bool,
 ) error {
 	// we need to make sure that every document in the current task gets an updated stringified
@@ -73,7 +74,7 @@ func printDocWorker(
 	wg *sync.WaitGroup,
 	docChan <-chan string,
 	errChan chan<- *plugins.Error,
-	collectedDocuments *CollectedDocuments,
+	collectedDocuments *collected.Documents,
 	includeHidden bool,
 ) {
 	// when we're done we need to signal the wait group
@@ -125,7 +126,7 @@ func printDocWorker(
 	}
 }
 
-func PrintCollectedDocument(doc *CollectedDocument, includeHidden bool) string {
+func PrintCollectedDocument(doc *collected.Document, includeHidden bool) string {
 	// start building up the string
 
 	// the big constraint here is that we need to scrub any unused variables
@@ -137,7 +138,8 @@ func PrintCollectedDocument(doc *CollectedDocument, includeHidden bool) string {
 	selection := printSelection(1, doc.Selections, usedVariables, includeHidden)
 
 	// we're now ready to buil up the query
-	printed := fmt.Sprintf(`%s %s`, doc.Kind, doc.Name)
+	var printedBuilder strings.Builder
+	fmt.Fprintf(&printedBuilder, `%s %s`, doc.Kind, doc.Name)
 
 	// operations (non-fragments) get their arguments printed here
 	if doc.Kind != "fragment" {
@@ -167,27 +169,27 @@ func PrintCollectedDocument(doc *CollectedDocument, includeHidden bool) string {
 			for _, arg := range toPrint {
 				printedArgs = append(printedArgs, printedVars[arg])
 			}
-			printed += fmt.Sprintf("(%s)", strings.Join(printedArgs, ", "))
+			fmt.Fprintf(&printedBuilder, "(%s)", strings.Join(printedArgs, ", "))
 		}
 	}
 
 	// add fragment type conditions
 	if doc.Kind == "fragment" {
-		printed += fmt.Sprintf(` on %s`, doc.TypeCondition)
+		fmt.Fprintf(&printedBuilder, ` on %s`, doc.TypeCondition)
 	}
 
 	// add the document directives
-	printed += documentDirectives
+	printedBuilder.WriteString(documentDirectives)
 
 	// and finally the selection
-	printed += fmt.Sprintf(` {
+	fmt.Fprintf(&printedBuilder, ` {
 %s}`, selection)
 
-	return printed
+	return printedBuilder.String()
 }
 
 func printDirectives(
-	directives []*CollectedDirective,
+	directives []*collected.Directive,
 	usedVariables map[string]bool,
 	includeHidden bool,
 ) string {
@@ -216,7 +218,7 @@ func printDirectives(
 
 func printSelectionArguments(
 	level int,
-	args []*CollectedArgument,
+	args []*collected.Argument,
 	usedVariables map[string]bool,
 	includeHidden bool,
 ) string {
@@ -249,7 +251,7 @@ func printSelectionArguments(
 }
 
 func printDocumentVariables(
-	variable *CollectedOperationVariable,
+	variable *collected.OperationVariable,
 	usedVariables map[string]bool,
 	includeHidden bool,
 ) string {
@@ -277,32 +279,32 @@ func printDocumentVariables(
 
 func printSelection(
 	level int,
-	selections []*CollectedSelection,
+	selections []*collected.Selection,
 	usedVariables map[string]bool,
 	includeHidden bool,
 ) string {
 	indent := strings.Repeat("    ", level)
-	result := ""
+	var resultBuilder strings.Builder
 	for _, selection := range selections {
 
 		// before we print children and directives we need
 		// to handle the specific selection type
 		switch selection.Kind {
 		case "fragment":
-			result += fmt.Sprintf("%s...%s", indent, selection.FieldName)
+			fmt.Fprintf(&resultBuilder, "%s...%s", indent, selection.FieldName)
 		case "inline_fragment":
 			typeCondition := ""
 			if selection.FieldName != "" {
 				typeCondition = fmt.Sprintf(" on %s", selection.FieldName)
 			}
-			result += fmt.Sprintf("%s...%s", indent, typeCondition)
+			fmt.Fprintf(&resultBuilder, "%s...%s", indent, typeCondition)
 		case "field":
 			alias := ""
 			if selection.Alias != nil && *selection.Alias != selection.FieldName {
 				alias = fmt.Sprintf("%s: ", *selection.Alias)
 			}
 			// add the selection name
-			result += fmt.Sprintf(
+			fmt.Fprintf(&resultBuilder,
 				"%s%s%s%s",
 				indent,
 				alias,
@@ -313,24 +315,24 @@ func printSelection(
 
 		// add the directives
 		if len(selection.Directives) > 0 {
-			result += printDirectives(selection.Directives, usedVariables, includeHidden)
+			resultBuilder.WriteString(printDirectives(selection.Directives, usedVariables, includeHidden))
 		}
 
 		// add the subselections
 		if len(selection.Children) > 0 {
-			result += fmt.Sprintf(
+			fmt.Fprintf(&resultBuilder,
 				" {\n%s%s}",
 				printSelection(level+1, selection.Children, usedVariables, includeHidden),
 				indent,
 			)
 		}
 
-		result += "\n"
+		resultBuilder.WriteRune('\n')
 	}
-	return result
+	return resultBuilder.String()
 }
 
-func printValue(value *CollectedArgumentValue, usedVariables map[string]bool) string {
+func printValue(value *collected.ArgumentValue, usedVariables map[string]bool) string {
 	if value == nil {
 		return "null"
 	}
@@ -344,26 +346,28 @@ func printValue(value *CollectedArgumentValue, usedVariables map[string]bool) st
 		usedVariables[value.Raw] = true
 		return "$" + value.Raw
 	case "Object":
-		result := "{"
+		var resultBuilder strings.Builder
+		resultBuilder.WriteRune('{')
 		for i, v := range value.Children {
-			result += fmt.Sprintf("%s: %s", v.Name, printValue(v.Value, usedVariables))
+			fmt.Fprintf(&resultBuilder, "%s: %s", v.Name, printValue(v.Value, usedVariables))
 			if i != len(value.Children)-1 {
-				result += ", "
+				resultBuilder.WriteString(", ")
 			}
 		}
-
-		return result + "}"
+		resultBuilder.WriteRune('}')
+		return resultBuilder.String()
 	case "List":
-		result := "["
+		var resultBuilder strings.Builder
+		resultBuilder.WriteRune('[')
 
 		for i, v := range value.Children {
-			result += printValue(v.Value, usedVariables)
+			resultBuilder.WriteString(printValue(v.Value, usedVariables))
 			if i != len(value.Children)-1 {
-				result += ", "
+				resultBuilder.WriteString(", ")
 			}
 		}
-
-		return result + "]"
+		resultBuilder.WriteRune(']')
+		return resultBuilder.String()
 	default:
 		return value.Raw
 	}

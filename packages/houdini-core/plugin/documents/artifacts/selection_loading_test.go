@@ -161,7 +161,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
 
                                       "edges": {
@@ -222,7 +221,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                                   "__typename": {
                                                       "type": "String",
                                                       "keyRaw": "__typename",
-                                                      "visible": true,
                                                   },
 
                                                   "endCursor": {
@@ -280,7 +278,7 @@ func TestLoadingArtifacts(t *testing.T) {
                   "enableLoadingState": "local",
                   "policy": "CacheOrNetwork",
                   "partial": false
-              }
+              } as const
 
               "HoudiniHash=ece6ef3e8361e90d01206d34ba36afbeed2fb1903e3946aaa65790ffa7f1d0a2"
             `),
@@ -343,7 +341,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
 
                                       "cats": {
@@ -361,7 +358,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                                   "__typename": {
                                                       "type": "String",
                                                       "keyRaw": "__typename",
-                                                      "visible": true,
                                                   },
 
                                                   "id": {
@@ -397,7 +393,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                               "__typename": {
                                                   "type": "String",
                                                   "keyRaw": "__typename",
-                                                  "visible": true,
                                               },
                                               "cats": {
                                                   "type": "Cat",
@@ -414,7 +409,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                                           "__typename": {
                                                               "type": "String",
                                                               "keyRaw": "__typename",
-                                                              "visible": true,
                                                           },
 
                                                           "id": {
@@ -460,7 +454,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                               "id": {
                                                   "type": "ID",
                                                   "keyRaw": "id",
-                                                  "visible": true,
                                               },
                                           },
                                       },
@@ -488,7 +481,7 @@ func TestLoadingArtifacts(t *testing.T) {
                   "enableLoadingState": "local",
                   "policy": "CacheOrNetwork",
                   "partial": false
-              }
+              } as const
 
               "HoudiniHash=a7e16dc3a8fe4cc7a47a16444f1809cbc0865be2d997ae28e4e2e2539e890841"
             `),
@@ -554,7 +547,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
                                   },
                                   "abstractFields": {
@@ -563,12 +555,10 @@ func TestLoadingArtifacts(t *testing.T) {
                                               "__typename": {
                                                   "type": "String",
                                                   "keyRaw": "__typename",
-                                                  "visible": true,
                                               },
                                               "id": {
                                                   "type": "ID",
                                                   "keyRaw": "id",
-                                                  "visible": true,
                                               },
                                               "name": {
                                                   "type": "String",
@@ -589,7 +579,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                               "__typename": {
                                                   "type": "String",
                                                   "keyRaw": "__typename",
-                                                  "visible": true,
                                               },
                                               "firstName": {
                                                   "type": "String",
@@ -608,7 +597,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                               "id": {
                                                   "type": "ID",
                                                   "keyRaw": "id",
-                                                  "visible": true,
                                               },
                                           },
                                       },
@@ -636,7 +624,7 @@ func TestLoadingArtifacts(t *testing.T) {
                   "enableLoadingState": "local",
                   "policy": "CacheOrNetwork",
                   "partial": false
-              }
+              } as const
 
               "HoudiniHash=75a077637efd548c3e2b73c0d6ba3a6b0adbf92d3661c3907253b00c250d594a"
             `),
@@ -704,7 +692,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
                                   },
                                   "abstractFields": {
@@ -713,7 +700,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                               "__typename": {
                                                   "type": "String",
                                                   "keyRaw": "__typename",
-                                                  "visible": true,
                                               },
                                               "firstName": {
                                                   "type": "String",
@@ -761,7 +747,7 @@ func TestLoadingArtifacts(t *testing.T) {
                   "enableLoadingState": "local",
                   "policy": "CacheOrNetwork",
                   "partial": false
-              }
+              } as const
 
               "HoudiniHash=5ba953f37cfa2e0ce515c4c22ce9c6e3206fc05adc5c96fbc7a3184691d672f1"
             `),
@@ -832,7 +818,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
                                   },
                                   "abstractFields": {
@@ -841,12 +826,10 @@ func TestLoadingArtifacts(t *testing.T) {
                                               "__typename": {
                                                   "type": "String",
                                                   "keyRaw": "__typename",
-                                                  "visible": true,
                                               },
                                               "id": {
                                                   "type": "ID",
                                                   "keyRaw": "id",
-                                                  "visible": true,
                                               },
                                               "name": {
                                                   "type": "String",
@@ -858,7 +841,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                               "__typename": {
                                                   "type": "String",
                                                   "keyRaw": "__typename",
-                                                  "visible": true,
                                               },
                                               "firstName": {
                                                   "type": "String",
@@ -877,7 +859,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                               "id": {
                                                   "type": "ID",
                                                   "keyRaw": "id",
-                                                  "visible": true,
                                               },
                                           },
                                       },
@@ -905,7 +886,7 @@ func TestLoadingArtifacts(t *testing.T) {
                   "enableLoadingState": "local",
                   "policy": "CacheOrNetwork",
                   "partial": false
-              }
+              } as const
 
               "HoudiniHash=75a077637efd548c3e2b73c0d6ba3a6b0adbf92d3661c3907253b00c250d594a"
             `),
@@ -966,7 +947,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                           "loading": {
                                               "kind": "value",
                                           },
-                                          "visible": true,
                                       },
                                   },
                                   "abstractFields": {
@@ -978,7 +958,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                                   "loading": {
                                                       "kind": "value",
                                                   },
-                                                  "visible": true,
                                               },
                                               "id": {
                                                   "type": "ID",
@@ -986,7 +965,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                                   "loading": {
                                                       "kind": "value",
                                                   },
-                                                  "visible": true,
                                               },
                                               "name": {
                                                   "type": "String",
@@ -1004,7 +982,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                                   "loading": {
                                                       "kind": "value",
                                                   },
-                                                  "visible": true,
                                               },
                                               "firstName": {
                                                   "type": "String",
@@ -1020,7 +997,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                                   "loading": {
                                                       "kind": "value",
                                                   },
-                                                  "visible": true,
                                               },
                                           },
                                       },
@@ -1046,7 +1022,7 @@ func TestLoadingArtifacts(t *testing.T) {
                   "enableLoadingState": "global",
                   "policy": "CacheOrNetwork",
                   "partial": false
-              }
+              } as const
 
               "HoudiniHash=75a077637efd548c3e2b73c0d6ba3a6b0adbf92d3661c3907253b00c250d594a"
             `),
@@ -1120,7 +1096,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
                                   },
                                   "abstractFields": {
@@ -1129,7 +1104,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                               "__typename": {
                                                   "type": "String",
                                                   "keyRaw": "__typename",
-                                                  "visible": true,
                                               },
                                               "firstName": {
                                                   "type": "String",
@@ -1139,7 +1113,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                               "id": {
                                                   "type": "ID",
                                                   "keyRaw": "id",
-                                                  "visible": true,
                                               },
                                           },
                                       },
@@ -1175,7 +1148,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                           "loading": {
                                               "kind": "value",
                                           },
-                                          "visible": true,
                                       },
                                   },
                                   "abstractFields": {
@@ -1187,7 +1159,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                                   "loading": {
                                                       "kind": "value",
                                                   },
-                                                  "visible": true,
                                               },
                                               "id": {
                                                   "type": "ID",
@@ -1195,7 +1166,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                                   "loading": {
                                                       "kind": "value",
                                                   },
-                                                  "visible": true,
                                               },
                                               "name": {
                                                   "type": "String",
@@ -1213,7 +1183,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                                   "loading": {
                                                       "kind": "value",
                                                   },
-                                                  "visible": true,
                                               },
                                               "firstName": {
                                                   "type": "String",
@@ -1229,7 +1198,6 @@ func TestLoadingArtifacts(t *testing.T) {
                                                   "loading": {
                                                       "kind": "value",
                                                   },
-                                                  "visible": true,
                                               },
                                           },
                                       },
@@ -1255,7 +1223,7 @@ func TestLoadingArtifacts(t *testing.T) {
                   "enableLoadingState": "local",
                   "policy": "CacheOrNetwork",
                   "partial": false
-              }
+              } as const
 
               "HoudiniHash=8a12a21168a8db7431b74a680bdce400f24aa9c577674893fddbf89c6d0a7877"
             `),

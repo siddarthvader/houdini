@@ -169,7 +169,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
 
                                       "edges": {
@@ -182,13 +181,11 @@ func TestPaginationArtifacts(t *testing.T) {
                                                   "__typename": {
                                                       "type": "String",
                                                       "keyRaw": "__typename",
-                                                      "visible": true,
                                                   },
 
                                                   "cursor": {
                                                       "type": "String",
                                                       "keyRaw": "cursor",
-                                                      "visible": true,
                                                   },
 
                                                   "node": {
@@ -201,7 +198,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                               "__typename": {
                                                                   "type": "String",
                                                                   "keyRaw": "__typename",
-                                                                  "visible": true,
                                                               },
 
                                                               "id": {
@@ -231,21 +227,18 @@ func TestPaginationArtifacts(t *testing.T) {
                                                       "keyRaw": "endCursor",
                                                       "updates": ["append", "prepend"],
                                                       "nullable": true,
-                                                      "visible": true,
                                                   },
 
                                                   "hasNextPage": {
                                                       "type": "Boolean",
                                                       "keyRaw": "hasNextPage",
                                                       "updates": ["append", "prepend"],
-                                                      "visible": true,
                                                   },
 
                                                   "hasPreviousPage": {
                                                       "type": "Boolean",
                                                       "keyRaw": "hasPreviousPage",
                                                       "updates": ["append", "prepend"],
-                                                      "visible": true,
                                                   },
 
                                                   "startCursor": {
@@ -253,12 +246,10 @@ func TestPaginationArtifacts(t *testing.T) {
                                                       "keyRaw": "startCursor",
                                                       "updates": ["append", "prepend"],
                                                       "nullable": true,
-                                                      "visible": true,
                                                   },
                                               },
                                           },
 
-                                          "visible": true,
                                       },
                                   },
                               },
@@ -293,7 +284,7 @@ func TestPaginationArtifacts(t *testing.T) {
                       "runtimeScalars": {},
                   },
 
-              }
+              } as const
 
               "HoudiniHash=0717f2042ae2b309e1ba4dbbe36b6adb42afef645e46a5d43205c91aaa184cac"
             `),
@@ -388,7 +379,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
 
                                       "edges": {
@@ -401,13 +391,11 @@ func TestPaginationArtifacts(t *testing.T) {
                                                   "__typename": {
                                                       "type": "String",
                                                       "keyRaw": "__typename",
-                                                      "visible": true,
                                                   },
 
                                                   "cursor": {
                                                       "type": "String",
                                                       "keyRaw": "cursor",
-                                                      "visible": true,
                                                   },
 
                                                   "node": {
@@ -420,7 +408,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                               "__typename": {
                                                                   "type": "String",
                                                                   "keyRaw": "__typename",
-                                                                  "visible": true,
                                                               },
 
                                                               "id": {
@@ -450,21 +437,18 @@ func TestPaginationArtifacts(t *testing.T) {
                                                       "keyRaw": "endCursor",
                                                       "updates": ["append", "prepend"],
                                                       "nullable": true,
-                                                      "visible": true,
                                                   },
 
                                                   "hasNextPage": {
                                                       "type": "Boolean",
                                                       "keyRaw": "hasNextPage",
                                                       "updates": ["append", "prepend"],
-                                                      "visible": true,
                                                   },
 
                                                   "hasPreviousPage": {
                                                       "type": "Boolean",
                                                       "keyRaw": "hasPreviousPage",
                                                       "updates": ["append", "prepend"],
-                                                      "visible": true,
                                                   },
 
                                                   "startCursor": {
@@ -472,12 +456,10 @@ func TestPaginationArtifacts(t *testing.T) {
                                                       "keyRaw": "startCursor",
                                                       "updates": ["append", "prepend"],
                                                       "nullable": true,
-                                                      "visible": true,
                                                   },
                                               },
                                           },
 
-                                          "visible": true,
                                       },
                                   },
                               },
@@ -512,7 +494,7 @@ func TestPaginationArtifacts(t *testing.T) {
                       "runtimeScalars": {},
                   },
 
-              }
+              } as const
 
               "HoudiniHash=0717f2042ae2b309e1ba4dbbe36b6adb42afef645e46a5d43205c91aaa184cac"
             `),
@@ -585,7 +567,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
 
                                       "id": {
@@ -624,7 +605,7 @@ func TestPaginationArtifacts(t *testing.T) {
                       "runtimeScalars": {},
                   },
 
-              }
+              } as const
 
               "HoudiniHash=6577eb9ceaacb8c040e55b45cedcdee871c094539b4167bc1b1b3c02baa7117d"
             `),
@@ -721,7 +702,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
 
                                       "friendsByCursorScalar": {
@@ -739,7 +719,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                   "__typename": {
                                                       "type": "String",
                                                       "keyRaw": "__typename",
-                                                      "visible": true,
                                                   },
 
                                                   "edges": {
@@ -752,13 +731,11 @@ func TestPaginationArtifacts(t *testing.T) {
                                                               "__typename": {
                                                                   "type": "String",
                                                                   "keyRaw": "__typename",
-                                                                  "visible": true,
                                                               },
 
                                                               "cursor": {
                                                                   "type": "String",
                                                                   "keyRaw": "cursor",
-                                                                  "visible": true,
                                                               },
 
                                                               "node": {
@@ -771,7 +748,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                           "__typename": {
                                                                               "type": "String",
                                                                               "keyRaw": "__typename",
-                                                                              "visible": true,
                                                                           },
 
                                                                           "friendsByCursor": {
@@ -784,7 +760,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                                       "__typename": {
                                                                                           "type": "String",
                                                                                           "keyRaw": "__typename",
-                                                                                          "visible": true,
                                                                                       },
 
                                                                                       "edges": {
@@ -796,7 +771,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                                                   "__typename": {
                                                                                                       "type": "String",
                                                                                                       "keyRaw": "__typename",
-                                                                                                      "visible": true,
                                                                                                   },
 
                                                                                                   "node": {
@@ -809,7 +783,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                                                               "__typename": {
                                                                                                                   "type": "String",
                                                                                                                   "keyRaw": "__typename",
-                                                                                                                  "visible": true,
                                                                                                               },
 
                                                                                                               "id": {
@@ -836,7 +809,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                           "id": {
                                                                               "type": "ID",
                                                                               "keyRaw": "id",
-                                                                              "visible": true,
                                                                           },
                                                                       },
                                                                   },
@@ -860,21 +832,18 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                   "keyRaw": "endCursor",
                                                                   "updates": ["append", "prepend"],
                                                                   "nullable": true,
-                                                                  "visible": true,
                                                               },
 
                                                               "hasNextPage": {
                                                                   "type": "Boolean",
                                                                   "keyRaw": "hasNextPage",
                                                                   "updates": ["append", "prepend"],
-                                                                  "visible": true,
                                                               },
 
                                                               "hasPreviousPage": {
                                                                   "type": "Boolean",
                                                                   "keyRaw": "hasPreviousPage",
                                                                   "updates": ["append", "prepend"],
-                                                                  "visible": true,
                                                               },
 
                                                               "startCursor": {
@@ -882,12 +851,10 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                   "keyRaw": "startCursor",
                                                                   "updates": ["append", "prepend"],
                                                                   "nullable": true,
-                                                                  "visible": true,
                                                               },
                                                           },
                                                       },
 
-                                                      "visible": true,
                                                   },
                                               },
                                           },
@@ -898,7 +865,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                       "id": {
                                           "type": "ID",
                                           "keyRaw": "id",
-                                          "visible": true,
                                       },
                                   },
                               },
@@ -934,7 +900,7 @@ func TestPaginationArtifacts(t *testing.T) {
 
                   "policy": "CacheOrNetwork",
                   "partial": false
-              }
+              } as const
 
               "HoudiniHash=7f2262dcaf136ea17500364d6ca7be04eca17f9950a9177287240aba89d8f8e7"
             `),
@@ -1067,7 +1033,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
 
                                       "edges": {
@@ -1079,7 +1044,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                   "__typename": {
                                                       "type": "String",
                                                       "keyRaw": "__typename",
-                                                      "visible": true,
                                                   },
 
                                                   "node": {
@@ -1092,7 +1056,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                               "__typename": {
                                                                   "type": "String",
                                                                   "keyRaw": "__typename",
-                                                                  "visible": true,
                                                               },
 
                                                               "friendsByCursor": {
@@ -1105,7 +1068,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                           "__typename": {
                                                                               "type": "String",
                                                                               "keyRaw": "__typename",
-                                                                              "visible": true,
                                                                           },
 
                                                                           "edges": {
@@ -1117,7 +1079,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                                       "__typename": {
                                                                                           "type": "String",
                                                                                           "keyRaw": "__typename",
-                                                                                          "visible": true,
                                                                                       },
 
                                                                                       "node": {
@@ -1130,7 +1091,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                                                   "__typename": {
                                                                                                       "type": "String",
                                                                                                       "keyRaw": "__typename",
-                                                                                                      "visible": true,
                                                                                                   },
 
                                                                                                   "id": {
@@ -1157,7 +1117,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                               "id": {
                                                                   "type": "ID",
                                                                   "keyRaw": "id",
-                                                                  "visible": true,
                                                               },
                                                           },
                                                       },
@@ -1191,7 +1150,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
 
                                       "edges": {
@@ -1204,13 +1162,11 @@ func TestPaginationArtifacts(t *testing.T) {
                                                   "__typename": {
                                                       "type": "String",
                                                       "keyRaw": "__typename",
-                                                      "visible": true,
                                                   },
 
                                                   "cursor": {
                                                       "type": "String",
                                                       "keyRaw": "cursor",
-                                                      "visible": true,
                                                   },
 
                                                   "node": {
@@ -1223,7 +1179,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                               "__typename": {
                                                                   "type": "String",
                                                                   "keyRaw": "__typename",
-                                                                  "visible": true,
                                                               },
 
                                                               "friendsByCursor": {
@@ -1236,7 +1191,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                           "__typename": {
                                                                               "type": "String",
                                                                               "keyRaw": "__typename",
-                                                                              "visible": true,
                                                                           },
 
                                                                           "edges": {
@@ -1248,7 +1202,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                                       "__typename": {
                                                                                           "type": "String",
                                                                                           "keyRaw": "__typename",
-                                                                                          "visible": true,
                                                                                       },
 
                                                                                       "node": {
@@ -1261,7 +1214,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                                                   "__typename": {
                                                                                                       "type": "String",
                                                                                                       "keyRaw": "__typename",
-                                                                                                      "visible": true,
                                                                                                   },
 
                                                                                                   "id": {
@@ -1288,7 +1240,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                               "id": {
                                                                   "type": "ID",
                                                                   "keyRaw": "id",
-                                                                  "visible": true,
                                                               },
                                                           },
                                                       },
@@ -1312,21 +1263,18 @@ func TestPaginationArtifacts(t *testing.T) {
                                                       "keyRaw": "endCursor",
                                                       "updates": ["append", "prepend"],
                                                       "nullable": true,
-                                                      "visible": true,
                                                   },
 
                                                   "hasNextPage": {
                                                       "type": "Boolean",
                                                       "keyRaw": "hasNextPage",
                                                       "updates": ["append", "prepend"],
-                                                      "visible": true,
                                                   },
 
                                                   "hasPreviousPage": {
                                                       "type": "Boolean",
                                                       "keyRaw": "hasPreviousPage",
                                                       "updates": ["append", "prepend"],
-                                                      "visible": true,
                                                   },
 
                                                   "startCursor": {
@@ -1334,12 +1282,10 @@ func TestPaginationArtifacts(t *testing.T) {
                                                       "keyRaw": "startCursor",
                                                       "updates": ["append", "prepend"],
                                                       "nullable": true,
-                                                      "visible": true,
                                                   },
                                               },
                                           },
 
-                                          "visible": true,
                                       },
                                   },
                               },
@@ -1374,7 +1320,7 @@ func TestPaginationArtifacts(t *testing.T) {
                       "runtimeScalars": {},
                   },
 
-              }
+              } as const
 
               "HoudiniHash=ee3d6b9798b1415980137fc3e9833fe8b89b968eb86d87cae840fdde0290d1ab"
             `),
@@ -1471,7 +1417,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                       "__typename": {
                                           "type": "String",
                                           "keyRaw": "__typename",
-                                          "visible": true,
                                       },
 
                                       "edges": {
@@ -1484,13 +1429,11 @@ func TestPaginationArtifacts(t *testing.T) {
                                                   "__typename": {
                                                       "type": "String",
                                                       "keyRaw": "__typename",
-                                                      "visible": true,
                                                   },
 
                                                   "cursor": {
                                                       "type": "String",
                                                       "keyRaw": "cursor",
-                                                      "visible": true,
                                                   },
 
                                                   "node": {
@@ -1503,7 +1446,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                               "__typename": {
                                                                   "type": "String",
                                                                   "keyRaw": "__typename",
-                                                                  "visible": true,
                                                               },
                                                           },
                                                           "abstractFields": {
@@ -1512,7 +1454,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                       "__typename": {
                                                                           "type": "String",
                                                                           "keyRaw": "__typename",
-                                                                          "visible": true,
                                                                       },
                                                                       "firstName": {
                                                                           "type": "String",
@@ -1522,7 +1463,6 @@ func TestPaginationArtifacts(t *testing.T) {
                                                                       "id": {
                                                                           "type": "ID",
                                                                           "keyRaw": "id",
-                                                                          "visible": true,
                                                                       },
                                                                   },
                                                               },
@@ -1551,21 +1491,18 @@ func TestPaginationArtifacts(t *testing.T) {
                                                       "keyRaw": "endCursor",
                                                       "updates": ["append", "prepend"],
                                                       "nullable": true,
-                                                      "visible": true,
                                                   },
 
                                                   "hasNextPage": {
                                                       "type": "Boolean",
                                                       "keyRaw": "hasNextPage",
                                                       "updates": ["append", "prepend"],
-                                                      "visible": true,
                                                   },
 
                                                   "hasPreviousPage": {
                                                       "type": "Boolean",
                                                       "keyRaw": "hasPreviousPage",
                                                       "updates": ["append", "prepend"],
-                                                      "visible": true,
                                                   },
 
                                                   "startCursor": {
@@ -1573,12 +1510,10 @@ func TestPaginationArtifacts(t *testing.T) {
                                                       "keyRaw": "startCursor",
                                                       "updates": ["append", "prepend"],
                                                       "nullable": true,
-                                                      "visible": true,
                                                   },
                                               },
                                           },
 
-                                          "visible": true,
                                       },
                                   },
                               },
@@ -1632,7 +1567,7 @@ func TestPaginationArtifacts(t *testing.T) {
 
                   "policy": "CacheOrNetwork",
                   "partial": false
-              }
+              } as const
 
               "HoudiniHash=0d0fa55060035d4eb6ae7de938bdcfe8703aecff0becc0a479b6e29ffa999e4b"
             `),

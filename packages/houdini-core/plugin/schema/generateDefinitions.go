@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/afero"
+	"golang.org/x/sync/errgroup"
 	"zombiezen.com/go/sqlite"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
@@ -24,28 +26,33 @@ func GenerateDefinitionFiles(
 		return fmt.Errorf("failed to get project config: %w", err)
 	}
 
-	// generate schema.graphql
-	err = generateSchemaFile(ctx, db, fs, projectConfig)
-	if err != nil {
-		return err
-	}
+	group, ctx := errgroup.WithContext(ctx)
 
-	// generate documents.gql
-	err = generateDocumentsFile(ctx, db, fs, projectConfig)
-	if err != nil {
-		return err
-	}
+	group.Go(func() error {
+		return generateSchemaFile(ctx, db, fs, projectConfig)
+	})
 
-	// generate enum files (enums.js, enums.d.ts, index files)
-	err = generateEnumFiles(ctx, db, fs, projectConfig)
-	if err != nil {
-		return err
-	}
+	group.Go(func() error {
+		return generateDocumentsFile(ctx, db, fs, projectConfig)
+	})
 
-	return nil
+	group.Go(func() error {
+		return generateEnumFiles(ctx, db, fs, projectConfig)
+	})
+
+	group.Go(func() error {
+		return generateInputTypeDefinitions(ctx, db, fs)
+	})
+
+	return group.Wait()
 }
 
-func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
+func generateSchemaFile(
+	ctx context.Context,
+	db plugins.DatabasePool[config.PluginConfig],
+	fs afero.Fs,
+	projectConfig plugins.ProjectConfig,
+) error {
 	type argument struct {
 		Name          string
 		Type          string
@@ -99,6 +106,7 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 				SELECT name, type, type_modifiers, default_value
 				FROM directive_arguments
 				WHERE parent = $directive
+				ORDER BY name
 			`, map[string]any{"directive": name}, func(stmt *sqlite.Stmt) {
 			arg := &argument{
 				Name:          stmt.ColumnText(0),
@@ -123,6 +131,7 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 				SELECT location
 				FROM directive_locations
 				WHERE directive = $directive
+				ORDER BY location
 			`, map[string]any{"directive": name}, func(stmt *sqlite.Stmt) {
 			location := stmt.ColumnText(0)
 			directive.Locations = append(directive.Locations, location)
@@ -146,7 +155,9 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 				if i > 0 {
 					schemaString.WriteString(", ")
 				}
-				schemaString.WriteString(fmt.Sprintf("%s: %s%s", arg.Name, arg.Type, arg.TypeModifiers))
+				schemaString.WriteString(
+					fmt.Sprintf("%s: %s%s", arg.Name, arg.Type, arg.TypeModifiers),
+				)
 			}
 			schemaString.WriteString(")")
 		}
@@ -179,6 +190,8 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 	for typeName := range customTypes {
 		enumNames = append(enumNames, typeName)
 	}
+	// sort enum names for deterministic output
+	sort.Strings(enumNames)
 	for _, typeName := range enumNames {
 
 		enumValues := []enumValue{}
@@ -200,7 +213,7 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 			continue
 		}
 
-		//description goes first as comment
+		// description goes first as comment
 		// if we found enum values, write the enum definition
 		if len(enumValues) > 0 {
 			schemaString.WriteString(fmt.Sprintf("enum %s {\n", typeName))
@@ -230,7 +243,12 @@ func generateSchemaFile(ctx context.Context, db plugins.DatabasePool[config.Plug
 	return nil
 }
 
-func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
+func generateDocumentsFile(
+	ctx context.Context,
+	db plugins.DatabasePool[config.PluginConfig],
+	fs afero.Fs,
+	projectConfig plugins.ProjectConfig,
+) error {
 	// get all documents from docuemnt table joined with discovered list and that are fragments
 	var documentString strings.Builder
 
@@ -266,8 +284,12 @@ func generateDocumentsFile(ctx context.Context, db plugins.DatabasePool[config.P
 	return nil
 }
 
-func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.PluginConfig], fs afero.Fs, projectConfig plugins.ProjectConfig) error {
-
+func generateEnumFiles(
+	ctx context.Context,
+	db plugins.DatabasePool[config.PluginConfig],
+	fs afero.Fs,
+	projectConfig plugins.ProjectConfig,
+) error {
 	type enumValue struct {
 		Value       string
 		Description string
@@ -391,10 +413,14 @@ func generateEnumFiles(ctx context.Context, db plugins.DatabasePool[config.Plugi
 				}
 				tsEnumString.WriteString("    */\n")
 			}
-			tsEnumString.WriteString(fmt.Sprintf("    readonly %s: \"%s\";\n", value.Value, value.Value))
+			tsEnumString.WriteString(
+				fmt.Sprintf("    readonly %s: \"%s\";\n", value.Value, value.Value),
+			)
 		}
 		tsEnumString.WriteString("}\n\n")
-		tsEnumString.WriteString(fmt.Sprintf("export type %s$options = ValuesOf<typeof %s>\n\n", enum.Name, enum.Name))
+		tsEnumString.WriteString(
+			fmt.Sprintf("export type %s$options = ValuesOf<typeof %s>\n\n", enum.Name, enum.Name),
+		)
 	}
 
 	// writing to enums.d.ts
