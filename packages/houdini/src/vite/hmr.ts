@@ -21,5 +21,7 @@ export async function shouldReactToFileChange(filepath: string, config: Config):
 		}
 	}
 
-	return config.includeFile(filepath, { root: process.cwd() })
+	return (
+		config.includeFile(filepath, { root: process.cwd() }) && !filepath.includes(config.rootDir)
+	)
 }
