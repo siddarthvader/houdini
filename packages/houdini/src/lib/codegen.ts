@@ -357,6 +357,7 @@ type PipelineHook = (typeof PIPELINE_HOOKS)[number]
 export type RunPipelineOptions = {
 	task_id?: string
 	after?: PipelineHook
+	start?: PipelineHook
 	through?: PipelineHook
 }
 
@@ -364,7 +365,7 @@ export async function run_pipeline(
 	trigger_hook: CompilerProxy['trigger_hook'],
 	options: RunPipelineOptions = {},
 ): Promise<Record<PipelineHook, Record<string, any>>> {
-	const { task_id, after, through } = options
+	const { task_id, after, start, through } = options
 	const results: Record<string, any> = {}
 
 	// Find the start and end indices
@@ -377,6 +378,13 @@ export async function run_pipeline(
 			throw new Error(`Unknown hook: ${after}`)
 		}
 		startIndex = afterIndex + 1
+	}
+	if (start) {
+		const index = PIPELINE_HOOKS.indexOf(start)
+		if (index === -1) {
+			throw new Error(`Unknown hook: ${after}`)
+		}
+		startIndex = index
 	}
 
 	if (through) {
@@ -397,7 +405,11 @@ export async function run_pipeline(
 		const opts: any = { task_id }
 
 		// Set parallel_safe for hooks that support it
-		if (hook === 'Validate' || hook === 'Generate') {
+		if (
+			hook === 'Validate' ||
+			hook === 'GenerateDocuments' ||
+			hook === 'GenerateRuntime'
+		) {
 			opts.parallel_safe = true
 		}
 
