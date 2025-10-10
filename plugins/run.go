@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"zombiezen.com/go/sqlite/sqlitex"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
@@ -63,12 +64,49 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 		return fmt.Errorf("failed to marshal hooks: %w", err)
 	}
 
+	wsHooks := pluginWebsocketHooks(ctx, plugin)
+	_, _ = json.Marshal(wsHooks) // We don't actually need the marshaled value, just checking for errors
+
+	// obtain a websocket upgrader
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+	//register WebSocket handler (new)
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		// Handle HTTP POST requests for hook triggering
+		if r.Method == "POST" {
+			handleWebsocketHookHTTP(w, r)
+			return
+		}
+
+		// Handle WebSocket upgrades
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Printf("WebSocket upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		log.Printf("WebSocket connection established from %s", r.RemoteAddr)
+
+		HandleWebSocketConnection(conn)
+
+		log.Printf("WebSocket connection closed from %s", r.RemoteAddr)
+	})
+
 	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
 		return err
 	}
 
 	port := listener.Addr().(*net.TCPAddr).Port
+
+	// Log the WebSocket URL
+	log.Printf("WEBSOCKET_URL: ws://localhost:%d/ws\n", port)
 
 	// create server instance so we can shut it down gracefully
 	srv := &http.Server{}
@@ -155,7 +193,7 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 				`
 					INSERT INTO plugins (
 						name, hooks, port, plugin_order, include_runtime, config_module, client_plugins
-					) VALUES 
+					) VALUES
 						(?, ?, ?, ?, ?, ?, ?)
 				`,
 				&sqlitex.ExecOptions{

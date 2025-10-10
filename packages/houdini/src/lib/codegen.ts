@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import path from 'node:path'
 import sqlite, { type DatabaseSync } from 'node:sqlite'
+import { WebSocket } from 'ws'
 
 import type { ProjectManifest } from '../runtime'
 import { db_path, houdini_root } from './conventions.js'
@@ -209,6 +210,12 @@ export async function codegen_setup(
 	) => {
 		const { port, directory } = plugin_specs[name]
 
+		// Use WebSocket for GenerateDocuments hook
+		if (hook === 'GenerateDocuments') {
+			const wsUrl = `ws://localhost:${port}/ws`
+			return await invoke_hook_websocket(name, hook, payload, task_id, wsUrl, directory)
+		}
+
 		// make the request
 		const response = await fetch(
 			`http://localhost:${port}/${hook.toLowerCase()}`,
@@ -244,6 +251,62 @@ export async function codegen_setup(
 			return await response.json()
 		}
 		return await response.text()
+	}
+
+	const invoke_hook_websocket = async (
+		name: string,
+		hook: string,
+		payload: Record<string, any> = {},
+		task_id: string | undefined,
+		wsUrl: string,
+		directory: string,
+	): Promise<any> => {
+		return new Promise((resolve, reject) => {
+			const ws = new WebSocket(wsUrl)
+			const messageId = `${hook}-${Date.now()}-${Math.random()}`
+
+			const timeout = setTimeout(() => {
+				ws.close()
+				reject(new Error(`WebSocket request timeout for ${name}/${hook}`))
+			}, 30000)
+
+			ws.on('open', () => {
+				const message = {
+					id: messageId,
+					type: 'request',
+					hook: hook,
+					payload: payload,
+					taskId: task_id,
+					pluginDirectory: directory,
+				}
+				ws.send(JSON.stringify(message))
+			})
+
+			ws.on('message', (data: Buffer) => {
+				try {
+					const response = JSON.parse(data.toString())
+					if (response.id === messageId) {
+						clearTimeout(timeout)
+						ws.close()
+
+						if (response.error) {
+							reject(new Error(`${name}/${hook}: ${response.error}`))
+						} else {
+							resolve(response.result)
+						}
+					}
+				} catch (err) {
+					clearTimeout(timeout)
+					ws.close()
+					reject(err)
+				}
+			})
+
+			ws.on('error', (err) => {
+				clearTimeout(timeout)
+				reject(new Error(`WebSocket error for ${name}/${hook}: ${err.message}`))
+			})
+		})
 	}
 
 	const trigger_hook = async (
