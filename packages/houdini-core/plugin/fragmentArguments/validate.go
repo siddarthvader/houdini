@@ -9,8 +9,8 @@ import (
 	"zombiezen.com/go/sqlite"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 func ValidateFragmentArgumentsMissingWith(
@@ -41,7 +41,7 @@ func ValidateFragmentArgumentsMissingWith(
 	GROUP BY s.id, d.id, d.name, rd.filepath, rd.offset_line, rd.offset_column
 	HAVING COUNT(sda.id) < 1
 	`
-	bindings := map[string]any{"with_directive": schema.WithDirective}
+	bindings := map[string]any{"with_directive": graphql.WithDirective}
 	err := db.StepQuery(ctx, query, bindings, func(stmt *sqlite.Stmt) {
 		fragmentName := stmt.ColumnText(2)
 		filepath := stmt.ColumnText(3)
@@ -101,7 +101,7 @@ func ValidateFragmentArgumentValues(
 		SELECT id, kind, raw, parent FROM arg_tree
 	`
 
-	bindings := map[string]any{"with_directive": schema.WithDirective}
+	bindings := map[string]any{"with_directive": graphql.WithDirective}
 	err := db.StepQuery(ctx, flatTreeQuery, bindings, func(stmt *sqlite.Stmt) {
 		id := stmt.ColumnInt(0)
 		kind := stmt.ColumnText(1)
@@ -164,7 +164,7 @@ func ValidateFragmentArgumentValues(
 		GROUP BY sd.id
 	`
 
-	step2Bindings := map[string]any{"with_directive": schema.WithDirective}
+	step2Bindings := map[string]any{"with_directive": graphql.WithDirective}
 	err = db.StepQuery(ctx, mainQuery, step2Bindings, func(stmt *sqlite.Stmt) {
 		// fragmentName := mainStmt.ColumnText(0)
 		documentVariablesJson := stmt.ColumnText(4)

@@ -3,11 +3,12 @@ package runtimeScalars
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"zombiezen.com/go/sqlite/sqlitex"
 
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 // we need to replace runtime scalars with their static equivalents and add the runtime scalar directive
@@ -38,10 +39,13 @@ func TransformVariables[PluginConfig any](
 	}
 
 	// we need a list of all the runtime scalars
-	runtimeScalars := ""
+	var runtimeScalarsBuilder strings.Builder
 	for scalar := range projectConfig.RuntimeScalars {
-		runtimeScalars += `'` + scalar + `',`
+		runtimeScalarsBuilder.WriteRune('\'')
+		runtimeScalarsBuilder.WriteString(scalar)
+		runtimeScalarsBuilder.WriteString("',")
 	}
+	runtimeScalars := runtimeScalarsBuilder.String()
 	if runtimeScalars == "" {
 		runtimeScalars = ","
 	}
@@ -135,7 +139,7 @@ func TransformVariables[PluginConfig any](
 		// we also need to add a directive to the variable
 		err = db.ExecStatement(insertDocumentVariableDirective, map[string]any{
 			"parent":    variablesID,
-			"directive": schema.RuntimeScalarDirective,
+			"directive": graphql.RuntimeScalarDirective,
 			"row":       row,
 			"column":    column,
 		})

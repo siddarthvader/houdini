@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 func TransformFields[PluginConfig any](
@@ -140,7 +140,7 @@ func TransformFields[PluginConfig any](
 		// insert the @with directive
 		err = db.ExecStatement(insertSelectionDirective, map[string]any{
 			"selection_id": selectionID,
-			"directive":    schema.WithDirective,
+			"directive":    graphql.WithDirective,
 		})
 		if err != nil {
 			errs.Append(plugins.WrapError(err))

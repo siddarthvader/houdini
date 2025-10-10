@@ -1,11 +1,6 @@
-package schema
+package graphql
 
 import "fmt"
-
-// componentFieldFragmentName returns the name of the fragment that holds the component field information
-func ComponentFieldFragmentName(typ string, field string) string {
-	return fmt.Sprintf("__componentField__%s_%s", typ, field)
-}
 
 const ComponentScalar = "Component"
 
@@ -58,6 +53,10 @@ const ListOperationSuffixDelete = "_delete"
 const PaginationModeInfinite = "Infinite"
 
 const PaginationModeSinglePage = "SinglePage"
+
+func ComponentFieldFragmentName(typ string, field string) string {
+	return fmt.Sprintf("__componentField__%s_%s", typ, field)
+}
 
 func FragmentPaginationQueryName(fragmentName string) string {
 	return fmt.Sprintf("%s_Pagination_Query", fragmentName)

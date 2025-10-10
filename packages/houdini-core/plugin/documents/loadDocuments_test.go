@@ -11,8 +11,8 @@ import (
 	"code.houdinigraphql.com/packages/houdini-core/config"
 	"code.houdinigraphql.com/packages/houdini-core/plugin"
 	"code.houdinigraphql.com/packages/houdini-core/plugin/documents"
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 	"code.houdinigraphql.com/plugins/tests"
 )
 
@@ -1194,7 +1194,7 @@ var loadDocumentsTable = []testCase{
 		inlineComponentFieldProp: tests.StrPtr("user"),
 		expectedDocs: []tests.ExpectedDocument{
 			{
-				Name:          schema.ComponentFieldFragmentName("User", "Avatar"),
+				Name:          graphql.ComponentFieldFragmentName("User", "Avatar"),
 				Kind:          "fragment",
 				TypeCondition: tests.StrPtr("User"),
 				Selections: []tests.ExpectedSelection{

@@ -11,8 +11,8 @@ import (
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 // Transform is responsible for walking down a document's selection and replaces
@@ -302,7 +302,7 @@ func processDocument[PluginConfig any](
 		return err
 	}
 
-	withSearch.SetText("$with_directive", schema.WithDirective)
+	withSearch.SetText("$with_directive", graphql.WithDirective)
 	err = db.BindStatement(withSearch, map[string]any{"document": documentID})
 	if err != nil {
 		return err
@@ -722,6 +722,7 @@ func cloneDocument[PluginConfig any](
 		kind := statements.SearchSelectionsWithArgs.GetText("kind")
 		alias := statements.SearchSelectionsWithArgs.GetText("alias")
 		selectionType := statements.SearchSelectionsWithArgs.GetText("type")
+		internal := statements.SearchSelectionsWithArgs.GetBool("internal")
 
 		var parentID any
 		if !statements.SearchSelectionsWithArgs.ColumnIsNull(0) {
@@ -768,6 +769,7 @@ func cloneDocument[PluginConfig any](
 			"row":        0,
 			"column":     0,
 			"path_index": pathIndex,
+			"internal":   internal,
 		})
 		if err != nil {
 			errs.Append(plugins.WrapError(err))
@@ -1120,7 +1122,7 @@ func prepareTransformStatements[PluginConfig any](
 	if err != nil {
 		return nil, err
 	}
-	withSpreadsInDocument.SetText("$with_directive", schema.WithDirective)
+	withSpreadsInDocument.SetText("$with_directive", graphql.WithDirective)
 
 	deleteValue, err := conn.Prepare(`
     DELETE FROM argument_values WHERE id = $id
@@ -1197,14 +1199,15 @@ func prepareTransformStatements[PluginConfig any](
 	}
 
 	copySelectionsNoArgs, err := conn.Prepare(`
-    INSERT INTO selection_refs (parent_id, child_id, path_index, document, row, column)
-    SELECT 
+    INSERT INTO selection_refs (parent_id, child_id, path_index, document, row, column, internal)
+    SELECT
         sr.parent_id,
         sr.child_id,
         sr.path_index,
         $to AS document,
         sr.row,
-        sr.column
+        sr.column,
+        sr.internal
     FROM selection_refs sr
     LEFT JOIN selection_arguments sa ON sr.child_id = sa.selection_id
     WHERE sr.document = $from
@@ -1342,7 +1345,7 @@ func prepareTransformStatements[PluginConfig any](
 	}
 
 	insertSelectionRef, err := conn.Prepare(`
-    INSERT INTO selection_refs (parent_id, child_id, document, row, column, path_index) VALUES ($parent_id, $child_id, $document, $row, $column, $path_index)
+    INSERT INTO selection_refs (parent_id, child_id, document, row, column, path_index, internal) VALUES ($parent_id, $child_id, $document, $row, $column, $path_index, $internal)
 `)
 	if err != nil {
 		return nil, err

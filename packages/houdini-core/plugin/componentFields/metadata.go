@@ -11,6 +11,7 @@ import (
 
 	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 // we need to look at anything tagged with @componentField and load the metadata into the database
@@ -102,8 +103,8 @@ func WriteMetadata[PluginConfig any](
 		GROUP BY doc_directives.id
 	`
 	bindings := map[string]any{
-		"component_field":     schema.ComponentFieldDirective,
-		"arguments_directive": schema.ArgumentsDirective,
+		"component_field":     graphql.ComponentFieldDirective,
+		"arguments_directive": graphql.ArgumentsDirective,
 	}
 
 	err := db.StepQuery(ctx, query, bindings, func(search *sqlite.Stmt) {

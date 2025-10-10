@@ -16,6 +16,7 @@ import (
 	"code.houdinigraphql.com/packages/houdini-core/config"
 	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 func LoadDocuments(
@@ -276,7 +277,7 @@ func LoadPendingQuery(
 			hasDirective := false
 			var field string
 			for _, directive := range inlineFragment.Directives {
-				if directive.Name != schema.ComponentFieldDirective {
+				if directive.Name != graphql.ComponentFieldDirective {
 					continue
 				}
 
@@ -362,7 +363,7 @@ func LoadPendingQuery(
 			// add a fragment definition to the document
 			parsed.Fragments = append(parsed.Fragments, &ast.FragmentDefinition{
 				TypeCondition: inlineFragment.TypeCondition,
-				Name:          schema.ComponentFieldFragmentName(fragmentType, field),
+				Name:          graphql.ComponentFieldFragmentName(fragmentType, field),
 				Directives:    inlineFragment.Directives,
 				SelectionSet:  inlineFragment.SelectionSet,
 			})
@@ -757,7 +758,7 @@ func LoadPendingQuery(
 			}
 
 			// we might need to register arguments on fragment by looking for the @arguments directive
-			if directive.Name == schema.ArgumentsDirective {
+			if directive.Name == graphql.ArgumentsDirective {
 				// we need to find the arguments directive and then add the arguments to the database
 				for _, arg := range directive.Arguments {
 					// the argument needs to be an object type
@@ -778,7 +779,7 @@ func LoadPendingQuery(
 					argName := arg.Name
 
 					// walk the object value and extract the values we need
-					var argDefault interface{}
+					var argDefault any
 					var argDefaultValue *ast.Value
 
 					// first, lets look for type information
@@ -961,6 +962,7 @@ func processSelection[PluginConfig any](
 		if s.Alias != "" {
 			statements.InsertSelection.BindText(2, s.Alias)
 		}
+
 		if err := db.ExecStatement(statements.InsertSelection, map[string]any{
 			"field_name": s.Name,
 			"kind":       "field",
@@ -1157,6 +1159,7 @@ func processSelection[PluginConfig any](
 		"document":   operationID,
 		"row":        line,
 		"column":     column,
+		"internal":   false,
 	}); err != nil {
 		return &plugins.Error{
 			Message: "could not store selection ref",
@@ -1214,14 +1217,14 @@ func processDirectives[PluginConfig any](
 			dArgType, ok := directiveArguments[fmt.Sprintf("%s.%s", directive.Name, dArg.Name)]
 			if !ok {
 				// if we are processing with or arguments, then the top level of the directive can accept any argument
-				if directive.Name == schema.WithDirective ||
-					directive.Name == schema.ArgumentsDirective {
+				if directive.Name == graphql.WithDirective ||
+					directive.Name == graphql.ArgumentsDirective {
 					dArgType = TypeWithModifiers{
 						Type:      "ArgumentSpecification",
 						Modifiers: "!",
 					}
-				} else if directive.Name == schema.WhenDirective ||
-					directive.Name == schema.WhenNotDirective {
+				} else if directive.Name == graphql.WhenDirective ||
+					directive.Name == graphql.WhenNotDirective {
 					dArgType = TypeWithModifiers{
 						Type: "__HOUDINI__PASSTHROUGH__",
 					}

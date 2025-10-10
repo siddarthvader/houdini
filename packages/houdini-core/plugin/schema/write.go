@@ -7,6 +7,7 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 func WriteProjectSchema[PluginConfig any](
@@ -38,7 +39,7 @@ func WriteProjectSchema[PluginConfig any](
 			continue
 		}
 
-		var isOperation interface{}
+		var isOperation any
 		if schema.Query != nil && typ.Name == schema.Query.Name {
 			isOperation = "query"
 		} else if schema.Mutation != nil && typ.Name == schema.Mutation.Name {
@@ -82,7 +83,8 @@ func WriteProjectSchema[PluginConfig any](
 						if reasonArg.Value != nil {
 							deprecationReason = reasonArg.Value.Raw
 							// remove quotes if present
-							if len(deprecationReason) >= 2 && deprecationReason[0] == '"' && deprecationReason[len(deprecationReason)-1] == '"' {
+							if len(deprecationReason) >= 2 && deprecationReason[0] == '"' &&
+								deprecationReason[len(deprecationReason)-1] == '"' {
 								deprecationReason = deprecationReason[1 : len(deprecationReason)-1]
 							}
 						}
@@ -93,7 +95,11 @@ func WriteProjectSchema[PluginConfig any](
 				description := value.Description
 				if deprecationReason != "" {
 					if description != "" {
-						description = fmt.Sprintf("%s\n@deprecated %s", description, deprecationReason)
+						description = fmt.Sprintf(
+							"%s\n@deprecated %s",
+							description,
+							deprecationReason,
+						)
 					} else {
 						description = fmt.Sprintf("@deprecated %s", deprecationReason)
 					}
@@ -471,7 +477,7 @@ func WriteInternalSchema[PluginConfig any](
 
 	// @list(name: String!) on FIELD_DEFINITION
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        ListDirective,
+		"name":        graphql.ListDirective,
 		"description": "@list is used to mark a field for the runtime as a place to add or remove entities in mutations",
 		"visible":     false,
 	})
@@ -479,14 +485,14 @@ func WriteInternalSchema[PluginConfig any](
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": ListDirective,
+		"directive": graphql.ListDirective,
 		"location":  "FIELD_DEFINITION",
 	})
 	if err != nil {
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive":      ListDirective,
+		"directive":      graphql.ListDirective,
 		"name":           "name",
 		"type":           "String",
 		"type_modifiers": "!",
@@ -495,7 +501,7 @@ func WriteInternalSchema[PluginConfig any](
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive": ListDirective,
+		"directive": graphql.ListDirective,
 		"name":      "connection",
 		"type":      "Boolean",
 	})
@@ -511,7 +517,7 @@ func WriteInternalSchema[PluginConfig any](
 	if err != nil {
 		return err
 	}
-	for _, value := range []string{PaginationModeInfinite, PaginationModeSinglePage} {
+	for _, value := range []string{graphql.PaginationModeInfinite, graphql.PaginationModeSinglePage} {
 		err = db.ExecStatement(statements.InsertEnumValue, map[string]any{
 			"parent": "PaginateMode",
 			"value":  value,
@@ -523,7 +529,7 @@ func WriteInternalSchema[PluginConfig any](
 
 	// @paginate(name: String!, mode: PaginateMode) on FIELD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        PaginationDirective,
+		"name":        graphql.PaginationDirective,
 		"description": "@paginate is used to to mark a field for pagination.",
 		"visible":     true,
 	})
@@ -531,14 +537,14 @@ func WriteInternalSchema[PluginConfig any](
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": PaginationDirective,
+		"directive": graphql.PaginationDirective,
 		"location":  "FIELD",
 	})
 	if err != nil {
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive":      PaginationDirective,
+		"directive":      graphql.PaginationDirective,
 		"name":           "name",
 		"type":           "String",
 		"type_modifiers": "!",
@@ -547,7 +553,7 @@ func WriteInternalSchema[PluginConfig any](
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive": PaginationDirective,
+		"directive": graphql.PaginationDirective,
 		"name":      "mode",
 		"type":      "PaginateMode",
 	})
@@ -557,7 +563,7 @@ func WriteInternalSchema[PluginConfig any](
 
 	// @prepend on FRAGMENT_SPREAD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        PrependDirective,
+		"name":        graphql.PrependDirective,
 		"description": "@prepend is used to tell the runtime to add the result to the end of the list",
 		"visible":     true,
 	})
@@ -565,7 +571,7 @@ func WriteInternalSchema[PluginConfig any](
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": PrependDirective,
+		"directive": graphql.PrependDirective,
 		"location":  "FRAGMENT_SPREAD",
 	})
 	if err != nil {
@@ -574,7 +580,7 @@ func WriteInternalSchema[PluginConfig any](
 
 	// @append on FRAGMENT_SPREAD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        AppendDirective,
+		"name":        graphql.AppendDirective,
 		"description": "@append is used to tell the runtime to add the result to the start of the list",
 		"visible":     true,
 	})
@@ -582,7 +588,7 @@ func WriteInternalSchema[PluginConfig any](
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": AppendDirective,
+		"directive": graphql.AppendDirective,
 		"location":  "FRAGMENT_SPREAD",
 	})
 	if err != nil {
@@ -609,7 +615,7 @@ func WriteInternalSchema[PluginConfig any](
 
 	// @dedupe(cancelFirst: Boolean, match: DedupeMatchMode) on QUERY and MUTATION
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name": DedupeDirective,
+		"name": graphql.DedupeDirective,
 		"description": `@dedupe is used to prevent an operation from running more than once at the same time. true
 If the cancelFirst arg is set to true, the response already in flight will be canceled instead of the second one.
 If match is set to Operation, then a request will be deduplicated any time there is a request with the same operation.
@@ -621,21 +627,21 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": DedupeDirective,
+		"directive": graphql.DedupeDirective,
 		"location":  "QUERY",
 	})
 	if err != nil {
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": DedupeDirective,
+		"directive": graphql.DedupeDirective,
 		"location":  "MUTATION",
 	})
 	if err != nil {
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive": DedupeDirective,
+		"directive": graphql.DedupeDirective,
 		"name":      "cancelFirst",
 		"type":      "Boolean",
 	})
@@ -643,7 +649,7 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive": DedupeDirective,
+		"directive": graphql.DedupeDirective,
 		"name":      "match",
 		"type":      "DedupeMatchMode",
 	})
@@ -653,7 +659,7 @@ then the request will never be deduplicated.`,
 
 	// @optimisticKey on FIELD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        OptimisticKeyDirective,
+		"name":        graphql.OptimisticKeyDirective,
 		"description": "@optimisticKey is used to tell the runtime to use the value of the field as the key for optimistic updates.",
 		"visible":     true,
 	})
@@ -661,7 +667,7 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": OptimisticKeyDirective,
+		"directive": graphql.OptimisticKeyDirective,
 		"location":  "FIELD",
 	})
 	if err != nil {
@@ -670,7 +676,7 @@ then the request will never be deduplicated.`,
 
 	// @allLists on FRAGMENT_SPREAD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        AllListsDirective,
+		"name":        graphql.AllListsDirective,
 		"description": "@allLists is used to tell the runtime to add the result to all lists in the cache.",
 		"visible":     true,
 	})
@@ -678,13 +684,13 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": AllListsDirective,
+		"directive": graphql.AllListsDirective,
 		"location":  "FRAGMENT_SPREAD",
 	})
 
 	// @parentID(value: ID!) on FRAGMENT_SPREAD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        ParentIDDirective,
+		"name":        graphql.ParentIDDirective,
 		"description": "@parentID is used to provide a parentID without specifying position or in situations where it doesn't make sense (eg when deleting a node.)",
 		"visible":     true,
 	})
@@ -692,14 +698,14 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": ParentIDDirective,
+		"directive": graphql.ParentIDDirective,
 		"location":  "FRAGMENT_SPREAD",
 	})
 	if err != nil {
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive":      ParentIDDirective,
+		"directive":      graphql.ParentIDDirective,
 		"name":           "value",
 		"type":           "ID",
 		"type_modifiers": "!",
@@ -710,7 +716,7 @@ then the request will never be deduplicated.`,
 
 	// @when on FRAGMENT_SPREAD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        WhenDirective,
+		"name":        graphql.WhenDirective,
 		"description": "@when is used to provide a conditional or in situations where it doesn't make sense (eg when removing or deleting a node.)",
 		"visible":     true,
 	})
@@ -718,13 +724,13 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": WhenDirective,
+		"directive": graphql.WhenDirective,
 		"location":  "FRAGMENT_SPREAD",
 	})
 
 	// @when_not on FRAGMENT_SPREAD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        WhenNotDirective,
+		"name":        graphql.WhenNotDirective,
 		"description": "@when_not is used to provide a conditional or in situations where it doesn't make sense (eg when removing or deleting a node.)",
 		"visible":     true,
 	})
@@ -732,13 +738,13 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": WhenNotDirective,
+		"directive": graphql.WhenNotDirective,
 		"location":  "FRAGMENT_SPREAD",
 	})
 
 	// @arguments on FRAGMENT_DEFINITION
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        ArgumentsDirective,
+		"name":        graphql.ArgumentsDirective,
 		"description": "@arguments is used to define the arguments of a fragment.",
 		"visible":     true,
 	})
@@ -746,7 +752,7 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": ArgumentsDirective,
+		"directive": graphql.ArgumentsDirective,
 		"location":  "FRAGMENT_DEFINITION",
 	})
 	if err != nil {
@@ -755,7 +761,7 @@ then the request will never be deduplicated.`,
 
 	// @with on FRAGMENT_SPREAD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        WithDirective,
+		"name":        graphql.WithDirective,
 		"description": "@with  is used to provide arguments to fragments that have been marked with @arguments",
 		"visible":     true,
 	})
@@ -763,7 +769,7 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": WithDirective,
+		"directive": graphql.WithDirective,
 		"location":  "FRAGMENT_SPREAD",
 	})
 	if err != nil {
@@ -812,7 +818,7 @@ then the request will never be deduplicated.`,
 
 	// @cache(policy: CachePolicy, partial: Boolean) on QUERY
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        CacheDirective,
+		"name":        graphql.CacheDirective,
 		"description": "@cache is is used to specify cache rules for a query",
 		"visible":     true,
 	})
@@ -820,14 +826,14 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": CacheDirective,
+		"directive": graphql.CacheDirective,
 		"location":  "QUERY",
 	})
 	if err != nil {
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive": CacheDirective,
+		"directive": graphql.CacheDirective,
 		"name":      "policy",
 		"type":      "CachePolicy",
 	})
@@ -835,7 +841,7 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive": CacheDirective,
+		"directive": graphql.CacheDirective,
 		"name":      "partial",
 		"type":      "Boolean",
 	})
@@ -845,7 +851,7 @@ then the request will never be deduplicated.`,
 
 	// @mask_enable on FRAGMENT_SPREAD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        EnableMaskDirective,
+		"name":        graphql.EnableMaskDirective,
 		"description": "@mask_enable is used to to enable masking on fragment (overwriting the global conf)",
 		"visible":     true,
 	})
@@ -853,7 +859,7 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": EnableMaskDirective,
+		"directive": graphql.EnableMaskDirective,
 		"location":  "FRAGMENT_SPREAD",
 	})
 	if err != nil {
@@ -862,7 +868,7 @@ then the request will never be deduplicated.`,
 
 	// @mask_disable on FRAGMENT_SPREAD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        DisableMaskDirective,
+		"name":        graphql.DisableMaskDirective,
 		"description": "@mask_disable is used to to disable masking on fragment (overwriting the global conf)",
 		"visible":     true,
 	})
@@ -870,7 +876,7 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": DisableMaskDirective,
+		"directive": graphql.DisableMaskDirective,
 		"location":  "FRAGMENT_SPREAD",
 	})
 	if err != nil {
@@ -879,7 +885,7 @@ then the request will never be deduplicated.`,
 
 	// @loading(count: Int, cascade: Boolean) on QUERY | FIELD | FRAGMENT_DEFINITION | FRAGMENT_SPREAD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        LoadingDirective,
+		"name":        graphql.LoadingDirective,
 		"description": "@loading is used to shape the value of your documents while they are loading",
 		"visible":     true,
 	})
@@ -888,7 +894,7 @@ then the request will never be deduplicated.`,
 	}
 	for _, loc := range []string{"FRAGMENT_SPREAD", "QUERY", "FIELD", "FRAGMENT_DEFINITION"} {
 		err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-			"directive": LoadingDirective,
+			"directive": graphql.LoadingDirective,
 			"location":  loc,
 		})
 		if err != nil {
@@ -896,7 +902,7 @@ then the request will never be deduplicated.`,
 		}
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive": LoadingDirective,
+		"directive": graphql.LoadingDirective,
 		"name":      "count",
 		"type":      "Int",
 	})
@@ -904,7 +910,7 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive": LoadingDirective,
+		"directive": graphql.LoadingDirective,
 		"name":      "cascade",
 		"type":      "Boolean",
 	})
@@ -914,7 +920,7 @@ then the request will never be deduplicated.`,
 
 	// @required on FIELD
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        RequiredDirective,
+		"name":        graphql.RequiredDirective,
 		"description": "@required makes a nullable field always non-null by making the parent null when the field is",
 		"visible":     true,
 	})
@@ -922,7 +928,7 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": RequiredDirective,
+		"directive": graphql.RequiredDirective,
 		"location":  "FIELD",
 	})
 	if err != nil {
@@ -931,7 +937,7 @@ then the request will never be deduplicated.`,
 
 	// @componentField(prop: String, field: String) on FRAGMENT_DEFINITION | INLINE_FRAGMENT | FIELD_DEFINITION
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        ComponentFieldDirective,
+		"name":        graphql.ComponentFieldDirective,
 		"description": "@componentField is used to mark a field as a component field",
 		"visible":     true,
 	})
@@ -940,7 +946,7 @@ then the request will never be deduplicated.`,
 	}
 	for _, loc := range []string{"FRAGMENT_DEFINITION", "INLINE_FRAGMENT", "FIELD_DEFINITION"} {
 		err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-			"directive": ComponentFieldDirective,
+			"directive": graphql.ComponentFieldDirective,
 			"location":  loc,
 		})
 		if err != nil {
@@ -948,7 +954,7 @@ then the request will never be deduplicated.`,
 		}
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive": ComponentFieldDirective,
+		"directive": graphql.ComponentFieldDirective,
 		"name":      "prop",
 		"type":      "String",
 	})
@@ -956,7 +962,7 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive": ComponentFieldDirective,
+		"directive": graphql.ComponentFieldDirective,
 		"name":      "field",
 		"type":      "String",
 	})
@@ -967,7 +973,7 @@ then the request will never be deduplicated.`,
 	// we need a directive to register runtime scalars but it shouldn't end up in the generated schema
 	// @runtimeScalar(name: String!) on QUERY
 	err = db.ExecStatement(statements.InsertInternalDirective, map[string]any{
-		"name":        RuntimeScalarDirective,
+		"name":        graphql.RuntimeScalarDirective,
 		"description": "@runtimeScalar is used to register a scalar with the runtime",
 		"visible":     false,
 	})
@@ -975,14 +981,14 @@ then the request will never be deduplicated.`,
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveLocation, map[string]any{
-		"directive": RuntimeScalarDirective,
+		"directive": graphql.RuntimeScalarDirective,
 		"location":  "QUERY",
 	})
 	if err != nil {
 		return err
 	}
 	err = db.ExecStatement(statements.InsertDirectiveArgument, map[string]any{
-		"directive":      RuntimeScalarDirective,
+		"directive":      graphql.RuntimeScalarDirective,
 		"name":           "type",
 		"type":           "String",
 		"type_modifiers": "!",

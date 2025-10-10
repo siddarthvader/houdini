@@ -13,8 +13,8 @@ import (
 	"zombiezen.com/go/sqlite"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 func ValidateSubscriptionsWithMultipleRootFields(
@@ -1820,8 +1820,8 @@ func ValidateMaskDirectives(
 		HAVING COUNT(DISTINCT sd.directive) > 1
 	`
 	bindings := map[string]any{
-		"enable_directive":  schema.EnableMaskDirective,
-		"disable_directive": schema.DisableMaskDirective,
+		"enable_directive":  graphql.EnableMaskDirective,
+		"disable_directive": graphql.DisableMaskDirective,
 	}
 	err := db.StepQuery(ctx, query, bindings, func(stmt *sqlite.Stmt) {
 		filepath := stmt.ColumnText(1)
@@ -1831,8 +1831,8 @@ func ValidateMaskDirectives(
 		errs.Append(&plugins.Error{
 			Message: fmt.Sprintf(
 				"You can't apply both @%s and @%s on the same fragment spread",
-				schema.EnableMaskDirective,
-				schema.DisableMaskDirective,
+				graphql.EnableMaskDirective,
+				graphql.DisableMaskDirective,
 			),
 			Kind: plugins.ErrorKindValidation,
 			Locations: []*plugins.ErrorLocation{
@@ -1884,7 +1884,7 @@ func ValidateLoadingDirective(
 		AND (rd.current_task = $task_id OR $task_id IS NULL)
 	`
 	bindings := map[string]any{
-		"loading_directive": schema.LoadingDirective,
+		"loading_directive": graphql.LoadingDirective,
 	}
 
 	err := db.StepQuery(ctx, query, bindings, func(stmt *sqlite.Stmt) {
@@ -1895,8 +1895,8 @@ func ValidateLoadingDirective(
 		errs.Append(&plugins.Error{
 			Message: fmt.Sprintf(
 				"@%s can only be applied at the root of a document or on a field/fragment spread whose parent also has @%s",
-				schema.LoadingDirective,
-				schema.LoadingDirective,
+				graphql.LoadingDirective,
+				graphql.LoadingDirective,
 			),
 			Kind: plugins.ErrorKindValidation,
 			Locations: []*plugins.ErrorLocation{
@@ -1953,7 +1953,7 @@ func ValidateRequiredDirective(
 	`
 
 	bindings := map[string]any{
-		"required_directive": schema.RequiredDirective,
+		"required_directive": graphql.RequiredDirective,
 	}
 
 	err := db.StepQuery(ctx, query, bindings, func(stmt *sqlite.Stmt) {
@@ -1971,7 +1971,7 @@ func ValidateRequiredDirective(
 			errs.Append(&plugins.Error{
 				Message: fmt.Sprintf(
 					"@%s may only be used on object fields, not on fields of %s type (field %q in document %s)",
-					schema.RequiredDirective,
+					graphql.RequiredDirective,
 					parentKind,
 					fieldName,
 					docName,
@@ -1994,8 +1994,8 @@ func ValidateRequiredDirective(
 			errs.Append(&plugins.Error{
 				Message: fmt.Sprintf(
 					"@%s may only be used on fields that are nullable on the server or on fields whose child selections already carry @%s (field %q in document %s)",
-					schema.RequiredDirective,
-					schema.RequiredDirective,
+					graphql.RequiredDirective,
+					graphql.RequiredDirective,
 					fieldName,
 					docName,
 				),
@@ -2039,7 +2039,7 @@ func ValidateOptimisticKeyOnScalar(
 	  AND (rd.current_task = $task_id OR $task_id IS NULL)
 	`
 	bindings := map[string]any{
-		"optimistic_key_directive": schema.OptimisticKeyDirective,
+		"optimistic_key_directive": graphql.OptimisticKeyDirective,
 	}
 
 	err := db.StepQuery(ctx, query, bindings, func(stmt *sqlite.Stmt) {
@@ -2053,7 +2053,7 @@ func ValidateOptimisticKeyOnScalar(
 		errs.Append(&plugins.Error{
 			Message: fmt.Sprintf(
 				"@%s can only be applied on scalar fields, but field %q in document %q has type kind %q",
-				schema.OptimisticKeyDirective,
+				graphql.OptimisticKeyDirective,
 				fieldName,
 				docName,
 				fieldTypeKind,
@@ -2074,7 +2074,7 @@ func ValidateOptimisticKeyFullSelection(
 	db plugins.DatabasePool[config.PluginConfig],
 	errs *plugins.ErrorList,
 ) {
-	optimisticDirective := schema.OptimisticKeyDirective
+	optimisticDirective := graphql.OptimisticKeyDirective
 
 	// Query returns one row per optimistic-key usage.
 	// We retrieve:
