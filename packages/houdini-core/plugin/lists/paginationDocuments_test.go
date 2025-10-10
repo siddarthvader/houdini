@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 	"code.houdinigraphql.com/plugins/tests"
 )
 
@@ -431,7 +431,7 @@ func TestPaginationDocumentGeneration(t *testing.T) {
 								...AllUsers_c9Zhk @with(first: $first, after: $after, before: $before, last: $last)
 							}
 						`,
-							schema.FragmentPaginationQueryName("AllUsers"),
+							graphql.FragmentPaginationQueryName("AllUsers"),
 						)),
 				},
 			},
@@ -484,7 +484,7 @@ func TestPaginationDocumentGeneration(t *testing.T) {
 								}
 							}
 						`,
-							schema.FragmentPaginationQueryName("Friends"),
+							graphql.FragmentPaginationQueryName("Friends"),
 						)),
 				},
 			},
@@ -526,7 +526,7 @@ func TestPaginationDocumentGeneration(t *testing.T) {
 								}
 							}
 						`,
-							schema.FragmentPaginationQueryName("Believers"),
+							graphql.FragmentPaginationQueryName("Believers"),
 						)),
 				},
 			},

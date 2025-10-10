@@ -9,8 +9,8 @@ import (
 	"zombiezen.com/go/sqlite"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 func ValidateConflictingPrependAppend(
@@ -37,8 +37,8 @@ func ValidateConflictingPrependAppend(
 	HAVING COUNT(DISTINCT sd.directive) > 1
 	`
 	bindings := map[string]any{
-		"prepend": schema.PrependDirective,
-		"append":  schema.AppendDirective,
+		"prepend": graphql.PrependDirective,
+		"append":  graphql.AppendDirective,
 	}
 	err := db.StepQuery(ctx, query, bindings, func(stmt *sqlite.Stmt) {
 		filepath := stmt.ColumnText(0)
@@ -87,8 +87,8 @@ func ValidateConflictingParentIDAllLists(
 		HAVING COUNT(DISTINCT sd.directive) > 1
 	`
 	bindings := map[string]any{
-		"parentID": schema.ParentIDDirective,
-		"allLists": schema.AllListsDirective,
+		"parentID": graphql.ParentIDDirective,
+		"allLists": graphql.AllListsDirective,
 	}
 	err := db.StepQuery(ctx, query, bindings, func(stmt *sqlite.Stmt) {
 		filepath := stmt.ColumnText(0)
@@ -135,8 +135,8 @@ func validateConflictingPaginateListDirectives(
 		HAVING COUNT(DISTINCT sd.directive) > 1
 	`
 	bindings := map[string]any{
-		"list_directive":     schema.ListDirective,
-		"paginate_directive": schema.PaginationDirective,
+		"list_directive":     graphql.ListDirective,
+		"paginate_directive": graphql.PaginationDirective,
 	}
 	err := db.StepQuery(ctx, query, bindings, func(stmt *sqlite.Stmt) {
 		filepath := stmt.ColumnText(0)
@@ -190,7 +190,7 @@ func ValidatePaginateTypeCondition(
 			AND (rd.current_task = $task_id OR $task_id IS NULL)
 	`
 	bindings := map[string]any{
-		"paginate_directive": schema.PaginationDirective,
+		"paginate_directive": graphql.PaginationDirective,
 	}
 	err := db.StepQuery(ctx, query, bindings, func(stmt *sqlite.Stmt) {
 		docName := stmt.ColumnText(0)
@@ -202,7 +202,7 @@ func ValidatePaginateTypeCondition(
 			Message: fmt.Sprintf(
 				"Document %q uses @%s but its type condition %q is invalid. It must either implement Node or have a type_configs entry with a valid resolve_query",
 				docName,
-				schema.PaginationDirective,
+				graphql.PaginationDirective,
 				typeCondition,
 			),
 			Kind: plugins.ErrorKindValidation,
@@ -239,7 +239,7 @@ func ValidateSinglePaginateDirective(
 		AND (rd.current_task = $task_id OR $task_id IS NULL)
 	`
 	bindings := map[string]any{
-		"paginate_directive": schema.PaginationDirective,
+		"paginate_directive": graphql.PaginationDirective,
 	}
 	// We'll group usages in memory by documentID.
 	type usage struct {
@@ -281,7 +281,7 @@ func ValidateSinglePaginateDirective(
 			errs.Append(&plugins.Error{
 				Message: fmt.Sprintf(
 					"@%s can only appear once in a document; found %d occurrences in document %q",
-					schema.PaginationDirective,
+					graphql.PaginationDirective,
 					len(usages),
 					docName,
 				),
@@ -414,13 +414,13 @@ func ValidateParentID(
 		AND sd2.id IS NULL
 	`
 	bindings := map[string]any{
-		"paginate_directive": schema.PaginationDirective,
-		"list_directive":     schema.ListDirective,
-		"insert_prefix":      schema.ListOperationSuffixInsert,
-		"toggle_prefix":      schema.ListOperationSuffixToggle,
-		"remove_prefix":      schema.ListOperationSuffixRemove,
-		"parentID_directive": schema.ParentIDDirective,
-		"allLists_directive": schema.AllListsDirective,
+		"paginate_directive": graphql.PaginationDirective,
+		"list_directive":     graphql.ListDirective,
+		"insert_prefix":      graphql.ListOperationSuffixInsert,
+		"toggle_prefix":      graphql.ListOperationSuffixToggle,
+		"remove_prefix":      graphql.ListOperationSuffixRemove,
+		"parentID_directive": graphql.ParentIDDirective,
+		"allLists_directive": graphql.AllListsDirective,
 	}
 
 	// every result is a list that requires a parent id but doesn't have one
@@ -583,8 +583,8 @@ func DiscoverListsThenValidate(
     GROUP BY b.selection_id
 	`
 	bindings := map[string]any{
-		"list_directive":     schema.ListDirective,
-		"paginate_directive": schema.PaginationDirective,
+		"list_directive":     graphql.ListDirective,
+		"paginate_directive": graphql.PaginationDirective,
 	}
 
 	// as we step through the results we'll need to keep track of operation names
@@ -651,7 +651,7 @@ func DiscoverListsThenValidate(
 				Locations:      []*plugins.ErrorLocation{},
 				Connection:     connection,
 				ListField:      listField,
-				Paginate:       directive == schema.PaginationDirective,
+				Paginate:       directive == graphql.PaginationDirective,
 				PageSize:       int(pageSize),
 				Emebedded:      embedded,
 				TargetType:     targetType,
@@ -790,7 +790,7 @@ func DiscoverListsThenValidate(
 var invalidConnectinErr = fmt.Sprintf(
 	`Looks like you are trying to use the "%s" directive on a field but your field does not conform to the connection spec:
 your edge type does not have node as a field. For more information, visit this link: ${siteURL}/guides/pagination`,
-	schema.PaginationDirective,
+	graphql.PaginationDirective,
 )
 
 func validateDirectives(
@@ -836,7 +836,7 @@ func validateDirectives(
 			AND (rd.current_task = $task_id OR $task_id IS NULL)
 	`
 	bindings := map[string]any{
-		"delete_prefix": schema.ListOperationSuffixDelete,
+		"delete_prefix": graphql.ListOperationSuffixDelete,
 	}
 	err := db.StepQuery(ctx, selectionSearch, bindings, func(stmt *sqlite.Stmt) {
 		errs.Append(&plugins.Error{
@@ -890,9 +890,9 @@ func validateFragmentSpreads(
 			AND (rd.current_task = $task_id OR $task_id IS NULL)
 	`
 	bindings := map[string]any{
-		"insert_prefix": schema.ListOperationSuffixInsert,
-		"remove_prefix": schema.ListOperationSuffixRemove,
-		"toggle_prefix": schema.ListOperationSuffixToggle,
+		"insert_prefix": graphql.ListOperationSuffixInsert,
+		"remove_prefix": graphql.ListOperationSuffixRemove,
+		"toggle_prefix": graphql.ListOperationSuffixToggle,
 	}
 
 	err := db.StepQuery(ctx, query, bindings, func(stmt *sqlite.Stmt) {
@@ -961,8 +961,8 @@ func validatePaginateArgs(
 	`)
 	db.BindStatement(usageQuery, map[string]any{
 		"paginate_mode_arg":  "mode",
-		"paginate_directive": schema.PaginationDirective,
-		"list_directive":     schema.ListDirective,
+		"paginate_directive": graphql.PaginationDirective,
+		"list_directive":     graphql.ListDirective,
 	})
 	defer usageQuery.Finalize()
 
@@ -1034,7 +1034,7 @@ func validatePaginateArgs(
 		seenNames[listName] = filepath
 
 		// if we're not looking at a paginated list, we're done here (we just need to confirm the name isn't a duplicate)
-		if directive != schema.PaginationDirective {
+		if directive != graphql.PaginationDirective {
 			return
 		}
 

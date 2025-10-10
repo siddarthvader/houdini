@@ -68,8 +68,8 @@ type Argument struct {
 
 // Directive represents a directive in a GraphQL document
 type Directive struct {
-	Internal  int        `json:"internal"`
-	Name      string     `json:"name"`
+	Internal  int         `json:"internal"`
+	Name      string      `json:"name"`
 	Arguments []*Argument `json:"arguments"`
 }
 

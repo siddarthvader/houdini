@@ -1,7 +1,6 @@
 package typescript_test
 
 import (
-	"context"
 	"testing"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
@@ -31,7 +30,7 @@ func TestApplyTypeModifiers(t *testing.T) {
 			modifiers: "!",
 			expected:  "string",
 		},
-		
+
 		// Single-level arrays
 		{
 			name:      "nullable list of nullable items: [String]",
@@ -57,7 +56,7 @@ func TestApplyTypeModifiers(t *testing.T) {
 			modifiers: "!]!",
 			expected:  "(string)[]",
 		},
-		
+
 		// Nested arrays (two levels)
 		{
 			name:      "nullable list of nullable lists of nullable items: [[String]]",
@@ -83,7 +82,7 @@ func TestApplyTypeModifiers(t *testing.T) {
 			modifiers: "!]]!",
 			expected:  "((string)[] | null)[]",
 		},
-		
+
 		// Complex nested scenarios
 		{
 			name:      "three-level nested arrays: [[[String!]!]!]!",
@@ -91,7 +90,7 @@ func TestApplyTypeModifiers(t *testing.T) {
 			modifiers: "!]!]!]!",
 			expected:  "(((string)[])[])[]",
 		},
-		
+
 		// Different base types
 		{
 			name:      "number array",
@@ -190,8 +189,6 @@ func TestConvertToTypeScriptType(t *testing.T) {
 	// Set up basic project config
 	projectConfig := plugins.ProjectConfig{}
 	db.SetProjectConfig(projectConfig)
-
-	ctx := context.Background()
 
 	tests := []struct {
 		name          string
@@ -339,8 +336,6 @@ func TestConvertToTypeScriptType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := typescript.ConvertToTypeScriptType(
-				ctx,
-				db,
 				projectConfig,
 				tt.kind,
 				tt.typeName,
@@ -581,10 +576,10 @@ func TestConvertScalarType_WithRuntimeScalars(t *testing.T) {
 	config := plugins.ProjectConfig{
 		RuntimeScalars: map[string]string{
 			"DateTime":        "String",
-			"UUID":           "ID",
+			"UUID":            "ID",
 			"UserFromSession": "ID",
-			"JSON":           "String",
-			"ChainedScalar":  "DateTime", // This should resolve to String via DateTime -> String
+			"JSON":            "String",
+			"ChainedScalar":   "DateTime", // This should resolve to String via DateTime -> String
 		},
 		Scalars: map[string]plugins.ScalarConfig{
 			"CustomDate": {
@@ -677,7 +672,7 @@ func TestConvertToTypeScriptType_WithRuntimeScalars(t *testing.T) {
 		RuntimeScalars: map[string]string{
 			"DateTime":        "String",
 			"UserFromSession": "ID",
-			"JSON":           "String",
+			"JSON":            "String",
 		},
 		Scalars: map[string]plugins.ScalarConfig{
 			"Money": {
@@ -686,8 +681,6 @@ func TestConvertToTypeScriptType_WithRuntimeScalars(t *testing.T) {
 		},
 	}
 	db.SetProjectConfig(projectConfig)
-
-	ctx := context.Background()
 
 	tests := []struct {
 		name          string
@@ -750,8 +743,6 @@ func TestConvertToTypeScriptType_WithRuntimeScalars(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := typescript.ConvertToTypeScriptType(
-				ctx,
-				db,
 				projectConfig,
 				tt.kind,
 				tt.typeName,

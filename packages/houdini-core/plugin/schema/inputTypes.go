@@ -84,8 +84,6 @@ func generateInputTypeDefinitions(
 			}
 
 			tsType, err := typescript.ConvertToTypeScriptType(
-				ctx,
-				db,
 				config,
 				field.Kind,
 				field.Type,

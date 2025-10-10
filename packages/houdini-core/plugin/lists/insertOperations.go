@@ -8,8 +8,8 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 func InsertOperationDocuments(
@@ -232,7 +232,7 @@ func InsertOperationDocuments(
 		copyTargets := []int64{}
 
 		// _insert and _toggle both get the full selection set
-		for _, suffixes := range []string{schema.ListOperationSuffixInsert, schema.ListOperationSuffixToggle} {
+		for _, suffixes := range []string{graphql.ListOperationSuffixInsert, graphql.ListOperationSuffixToggle} {
 			err := db.ExecStatement(insertDocument, map[string]any{
 				"name":           fmt.Sprintf("%s%s", name, suffixes),
 				"kind":           "fragment",
@@ -415,7 +415,7 @@ func InsertOperationDocuments(
 		if ok := insertedDirectives[typeName]; !ok {
 			// we need to insert a delete directive for each type that has a list
 			err = db.ExecStatement(insertInternalDirectiveStmt, map[string]any{
-				"name":        fmt.Sprintf("%s%s", typeName, schema.ListOperationSuffixDelete),
+				"name":        fmt.Sprintf("%s%s", typeName, graphql.ListOperationSuffixDelete),
 				"description": fmt.Sprintf("Delete the %s with the matching key", typeName),
 			})
 			if err != nil {
@@ -431,7 +431,7 @@ func InsertOperationDocuments(
 		if listName != "" {
 			// we also need to insert a remove fragment for each type that has a list
 			err = db.ExecStatement(insertDocument, map[string]any{
-				"name":           fmt.Sprintf("%s%s", listName, schema.ListOperationSuffixRemove),
+				"name":           fmt.Sprintf("%s%s", listName, graphql.ListOperationSuffixRemove),
 				"kind":           "fragment",
 				"type_condition": typeName,
 				"raw_document":   rawDocument,

@@ -1,17 +1,13 @@
 package typescript
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
-	"code.houdinigraphql.com/packages/houdini-core/config"
 	"code.houdinigraphql.com/plugins"
 )
 
 func ConvertToTypeScriptType(
-	ctx context.Context,
-	db plugins.DatabasePool[config.PluginConfig],
 	config plugins.ProjectConfig,
 	kind, typeName, typeModifiers string,
 	isInput bool,

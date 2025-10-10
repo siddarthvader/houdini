@@ -11,8 +11,8 @@ import (
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 // Transform is responsible for walking down a document's selection and replaces
@@ -302,7 +302,7 @@ func processDocument[PluginConfig any](
 		return err
 	}
 
-	withSearch.SetText("$with_directive", schema.WithDirective)
+	withSearch.SetText("$with_directive", graphql.WithDirective)
 	err = db.BindStatement(withSearch, map[string]any{"document": documentID})
 	if err != nil {
 		return err
@@ -1122,7 +1122,7 @@ func prepareTransformStatements[PluginConfig any](
 	if err != nil {
 		return nil, err
 	}
-	withSpreadsInDocument.SetText("$with_directive", schema.WithDirective)
+	withSpreadsInDocument.SetText("$with_directive", graphql.WithDirective)
 
 	deleteValue, err := conn.Prepare(`
     DELETE FROM argument_values WHERE id = $id

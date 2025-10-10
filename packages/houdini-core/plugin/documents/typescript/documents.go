@@ -4,24 +4,24 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
 	"code.houdinigraphql.com/packages/houdini-core/plugin/documents/collected"
 	"code.houdinigraphql.com/plugins"
-	"code.houdinigraphql.com/plugins/schema"
+	"code.houdinigraphql.com/plugins/graphql"
 	"github.com/spf13/afero"
 	"zombiezen.com/go/sqlite"
 )
 
 // DocumentContext holds document-specific state that was previously stored in global variables
+// and embeds context.Context to serve as both context and document state
 type DocumentContext struct {
-	Name       string
-	HasLoading bool
-	// EnumTypes accumulates enum types encountered during type generation (used as a set)
-	EnumTypes map[string]bool
-	// InputTypes accumulates input types encountered during type generation (used as a set)
-	InputTypes map[string]bool
+	HasLoading    bool
+	ProjectConfig plugins.ProjectConfig
+	EnumTypes     map[string]bool
+	InputTypes    map[string]bool
 }
 
 func GenerateDocumentTypeDefs(
@@ -56,8 +56,6 @@ func GenerateDocumentTypeDefs(
 
 		// Generate TypeScript type definitions for this document
 		typeDef, err := generateDocumentTypeDef(
-			ctx,
-			db,
 			projectConfig,
 			rootTypeName,
 			doc,
@@ -81,18 +79,16 @@ func GenerateDocumentTypeDefs(
 }
 
 func generateDocumentTypeDef(
-	ctx context.Context,
-	db plugins.DatabasePool[config.PluginConfig],
 	projectConfig plugins.ProjectConfig,
 	rootTypeName string,
 	doc *collected.Document,
 	collectedDocs *collected.Documents,
 ) (string, error) {
 	// Create document context to pass state instead of using global variables
-	docCtx := &DocumentContext{
-		Name:       doc.Name,
-		EnumTypes:  make(map[string]bool),
-		InputTypes: make(map[string]bool),
+	docCtx := DocumentContext{
+		ProjectConfig: projectConfig,
+		EnumTypes:     make(map[string]bool),
+		InputTypes:    make(map[string]bool),
 	}
 	hasFieldLoading := hasAnyLoadingDirectives(doc.Selections)
 	hasGlobalLoading := hasDocumentLevelLoading(doc)
@@ -115,12 +111,9 @@ func generateDocumentTypeDef(
 	if doc.Kind == "fragment" {
 		// Generate fragment types
 		fragmentTypes := generateFragmentTypes(
-			ctx,
-			db,
-			projectConfig,
+			docCtx,
 			rootTypeName,
 			doc,
-			docCtx,
 			collectedDocs,
 		)
 
@@ -133,7 +126,12 @@ func generateDocumentTypeDef(
 		// For fragments, we'll handle the artifact import specially in the output generation
 	} else {
 		// Generate operation types
-		typeDefinitions = append(typeDefinitions, generateOperationTypes(ctx, db, projectConfig, rootTypeName, doc, docCtx, collectedDocs)...)
+		typeDefinitions = append(typeDefinitions, generateOperationTypes(
+			docCtx,
+			rootTypeName,
+			doc,
+			collectedDocs,
+		)...)
 	}
 
 	// Now generate imports based on collected dependencies
@@ -272,12 +270,9 @@ func generateDocumentTypeDef(
 }
 
 func generateFragmentTypes(
-	ctx context.Context,
-	db plugins.DatabasePool[config.PluginConfig],
-	projectConfig plugins.ProjectConfig,
+	ctx DocumentContext,
 	rootTypeName string,
 	doc *collected.Document,
-	docCtx *DocumentContext,
 	collectedDocs *collected.Documents,
 ) []string {
 	var types []string
@@ -288,11 +283,10 @@ func generateFragmentTypes(
 		var inputFields []string
 		for _, variable := range doc.Variables {
 			tsType := convertToTypeScriptTypeSimple(
+				ctx,
 				variable.Type,
 				&variable.TypeModifiers,
 				collectedDocs,
-				projectConfig,
-				docCtx,
 			)
 			optional := ""
 			if !strings.HasSuffix(variable.TypeModifiers, "!") {
@@ -328,33 +322,26 @@ func generateFragmentTypes(
 		// Generate union type with normal and loading states
 		normalType, _ := generateSelectionType(
 			ctx,
-			db,
-			projectConfig,
 			doc.Selections,
 			true,
 			0,
 			rootTypeName,
-			docCtx,
 			collectedDocs,
 		)
 		hasGlobalLoading := hasDocumentLevelLoading(doc) && !hasAnyLoadingDirectives(doc.Selections)
 		loadingType, _ := generateLoadingStateType(
 			ctx,
-			db,
-			projectConfig,
 			doc.Selections,
-			true,
 			0,
 			rootTypeName,
 			hasGlobalLoading,
-			docCtx,
 			collectedDocs,
 		)
 		dataType := fmt.Sprintf("%s | %s", normalType, loadingType)
 		types = append(types, fmt.Sprintf("export type %s = %s;", dataTypeName, dataType))
 	} else {
 		// Generate normal single type
-		dataType, _ := generateSelectionType(ctx, db, projectConfig, doc.Selections, true, 0, rootTypeName, docCtx, collectedDocs)
+		dataType, _ := generateSelectionType(ctx, doc.Selections, true, 0, rootTypeName, collectedDocs)
 		types = append(types, fmt.Sprintf("export type %s = %s;", dataTypeName, dataType))
 	}
 
@@ -362,12 +349,9 @@ func generateFragmentTypes(
 }
 
 func generateOperationTypes(
-	ctx context.Context,
-	db plugins.DatabasePool[config.PluginConfig],
-	projectConfig plugins.ProjectConfig,
+	ctx DocumentContext,
 	rootTypeName string,
 	doc *collected.Document,
-	docCtx *DocumentContext,
 	collectedDocs *collected.Documents,
 ) []string {
 	var types []string
@@ -382,65 +366,57 @@ func generateOperationTypes(
 		resultTypeRef = fmt.Sprintf("%s | undefined", resultTypeName)
 	}
 
-	// Generate main type - only include input field if there are variables
+	// Generate main type - input field is optional when there are no variables
+	var inputField string
 	if len(doc.Variables) > 0 {
-		mainType := fmt.Sprintf(`export type %s = {
-	readonly "input": %s;
-	readonly "result": %s;
-};`, doc.Name, inputTypeName, resultTypeRef)
-		types = append(types, mainType)
+		inputField = fmt.Sprintf(`	readonly "input": %s;`, inputTypeName)
 	} else {
-		mainType := fmt.Sprintf(`export type %s = {
-	readonly "result": %s;
-};`, doc.Name, resultTypeRef)
-		types = append(types, mainType)
+		inputField = fmt.Sprintf(`	readonly "input"?: %s;`, inputTypeName)
 	}
 
+	mainType := fmt.Sprintf(`export type %s = {
+%s
+	readonly "result": %s;
+};`, doc.Name, inputField, resultTypeRef)
+	types = append(types, mainType)
+
 	// Generate result type
-	if docCtx.HasLoading {
+	if ctx.HasLoading {
 		// Generate union type with normal and loading states
 		normalType, _ := generateSelectionType(
 			ctx,
-			db,
-			projectConfig,
 			doc.Selections,
 			true,
 			0,
 			rootTypeName,
-			docCtx,
 			collectedDocs,
 		)
 		hasGlobalLoading := hasDocumentLevelLoading(doc) && !hasAnyLoadingDirectives(doc.Selections)
 		loadingType, _ := generateLoadingStateType(
 			ctx,
-			db,
-			projectConfig,
 			doc.Selections,
-			true,
 			0,
 			rootTypeName,
 			hasGlobalLoading,
-			docCtx,
 			collectedDocs,
 		)
 		resultType := fmt.Sprintf("%s | %s", normalType, loadingType)
 		types = append(types, fmt.Sprintf("export type %s = %s;", resultTypeName, resultType))
 	} else {
 		// Generate normal single type
-		resultType, _ := generateSelectionType(ctx, db, projectConfig, doc.Selections, true, 0, rootTypeName, docCtx, collectedDocs)
+		resultType, _ := generateSelectionType(ctx, doc.Selections, true, 0, rootTypeName, collectedDocs)
 		types = append(types, fmt.Sprintf("export type %s = %s;", resultTypeName, resultType))
 	}
 
-	// Generate input type
+	// Generate input type - always generate, but set to null | undefined if no variables
 	if len(doc.Variables) > 0 {
 		var inputFields []string
 		for _, variable := range doc.Variables {
 			tsType := convertToTypeScriptTypeSimple(
+				ctx,
 				variable.Type,
 				&variable.TypeModifiers,
 				collectedDocs,
-				projectConfig,
-				docCtx,
 			)
 			optional := ""
 			if !strings.HasSuffix(variable.TypeModifiers, "!") {
@@ -458,21 +434,19 @@ func generateOperationTypes(
 		)
 		types = append(types, inputType)
 	} else {
-		// For operations with no variables, input type should be null
-		types = append(types, fmt.Sprintf("export type %s = null;", inputTypeName))
+		// No variables - input type is null | undefined
+		inputType := fmt.Sprintf("export type %s = null | undefined;", inputTypeName)
+		types = append(types, inputType)
 	}
 
 	// Generate optimistic type for mutations
 	if doc.Kind == "mutation" {
 		optimisticType, _ := generateOptimisticType(
 			ctx,
-			db,
-			projectConfig,
 			doc.Selections,
 			true,
 			0,
 			rootTypeName,
-			docCtx,
 			collectedDocs,
 		)
 		types = append(
@@ -485,14 +459,11 @@ func generateOperationTypes(
 }
 
 func generateSelectionType(
-	ctx context.Context,
-	db plugins.DatabasePool[config.PluginConfig],
-	projectConfig plugins.ProjectConfig,
+	ctx DocumentContext,
 	selections []*collected.Selection,
 	readonly bool,
 	indentLevel int,
 	parentType string,
-	docCtx *DocumentContext,
 	collectedDocs *collected.Documents,
 ) (string, error) {
 	if len(selections) == 0 {
@@ -519,23 +490,21 @@ func generateSelectionType(
 
 	// Fragment loading logic is now handled in the visibility determination below
 
-	// Count explicit fields that would be visible (excluding key fields that would be auto-skipped)
+	// Count explicit fields that would be visible (excluding internal/auto-added fields)
 	for _, sel := range selections {
 		if sel.Kind == "fragment" {
 			visibleSelections = append(visibleSelections, sel)
 			continue
 		}
 
-		// For non-fragment fields, check if they would be skipped
-		// Use a preliminary check that doesn't depend on explicitFieldCount
-		isKeyField := isKeyFieldName(parentType, sel.FieldName, projectConfig)
-		wouldBeSkipped := isKeyField && (!docCtx.HasLoading || fragmentCount > 0)
+		// Skip internal fields (automatically added fields like __typename)
+		if sel.Internal {
+			continue
+		}
 
-		if !wouldBeSkipped {
-			visibleSelections = append(visibleSelections, sel)
-			if sel.FieldName != "__typename" {
-				explicitFieldCount++
-			}
+		visibleSelections = append(visibleSelections, sel)
+		if sel.FieldName != "__typename" {
+			explicitFieldCount++
 		}
 	}
 
@@ -556,7 +525,7 @@ func generateSelectionType(
 		// Check if this field has @loading directive (for future use)
 		hasLoadingDirective := false
 		for _, directive := range selection.Directives {
-			if directive.Name == schema.LoadingDirective {
+			if directive.Name == graphql.LoadingDirective {
 				hasLoadingDirective = true
 				break
 			}
@@ -589,16 +558,22 @@ func generateSelectionType(
 		if len(selection.Children) > 0 {
 			if hasInlineFragments {
 				// Interface/Union type - generate union with discriminators
-				fieldType = generateInterfaceUnionType(
+				unionType := generateInterfaceUnionType(
+					ctx,
 					selection,
 					readonly,
 					collectedDocs,
-					projectConfig,
-					docCtx,
 				)
+
+				// Apply type modifiers (lists, nullability) to the union type
+				modifiers := ""
+				if selection.TypeModifiers != nil {
+					modifiers = *selection.TypeModifiers
+				}
+				fieldType = ApplyTypeModifiers(unionType, modifiers, false) // Output type
 			} else {
 				// Regular nested object type
-				childType, childErr := generateSelectionType(ctx, db, projectConfig, selection.Children, readonly, indentLevel+1, selection.FieldType, docCtx, collectedDocs)
+				childType, childErr := generateSelectionType(ctx, selection.Children, readonly, indentLevel+1, selection.FieldType, collectedDocs)
 				if childErr != nil {
 					return "", childErr
 				}
@@ -612,7 +587,7 @@ func generateSelectionType(
 			}
 		} else {
 			// Scalar field - use simplified type conversion
-			fieldType = convertToTypeScriptTypeSimple(selection.FieldType, selection.TypeModifiers, collectedDocs, projectConfig, docCtx)
+			fieldType = convertToTypeScriptTypeSimple(ctx, selection.FieldType, selection.TypeModifiers, collectedDocs)
 		}
 
 		// Add readonly modifier if needed
@@ -627,8 +602,7 @@ func generateSelectionType(
 		if selection.Description != nil && *selection.Description != "" {
 			comment := fieldComment(selection, indentLevel+1)
 			fieldDef = fmt.Sprintf(
-				"%s%s\n%s%s%s: %s;",
-				indent,
+				"%s\n%s%s%s: %s;",
 				comment,
 				indent,
 				readonlyPrefix,
@@ -669,70 +643,110 @@ func generateSelectionType(
 }
 
 func generateInterfaceUnionType(
+	ctx DocumentContext,
 	selection *collected.Selection,
 	readonly bool,
 	collectedDocs *collected.Documents,
-	projectConfig plugins.ProjectConfig,
-	docCtx *DocumentContext,
 ) string {
 	readonlyPrefix := ""
 	if readonly {
 		readonlyPrefix = "readonly "
 	}
 
-	// Get the possible types for this interface/union from collected data
-	possibleTypesMap, exists := collectedDocs.PossibleTypes[selection.FieldType]
-	if !exists || len(possibleTypesMap) == 0 {
-		// Fallback to a simple object type if no possible types found
-		return "{}"
+	// Collect all fragments and determine which concrete types need union members
+	fragmentsByType := make(map[string][]*collected.Selection)
+	concreteTypesSet := make(map[string]bool)
+
+	// Get the possible types for this field (e.g., for Entity union: User, Cat)
+	fieldPossibleTypes := make(map[string]bool)
+	if possibleTypesMap, exists := collectedDocs.PossibleTypes[selection.FieldType]; exists {
+		for typeName := range possibleTypesMap {
+			fieldPossibleTypes[typeName] = true
+		}
+	} else {
+		// If it's not a union/interface, the field type itself is the only possible type
+		fieldPossibleTypes[selection.FieldType] = true
 	}
 
-	// Convert map to sorted slice for consistent output
-	var possibleTypes []string
-	for typeName := range possibleTypesMap {
-		possibleTypes = append(possibleTypes, typeName)
-	}
+	// Helper function to recursively process inline fragments
+	var processInlineFragments func([]*collected.Selection)
+	processInlineFragments = func(selections []*collected.Selection) {
+		for _, child := range selections {
+			if child.Kind == "inline_fragment" {
+				fragmentTypeName := child.FieldName
 
-	// Build union parts for each possible type
-	var unionParts []string
-	for _, typeName := range possibleTypes {
-		// Build the type literal for this possible type
-		var fields []string
-
-		// Generate fields from the actual selection children for this concrete type
-		// We need to filter selections that apply to this specific type
-		for _, child := range selection.Children {
-			if child.Kind == "field" {
-				// Regular field - include it for all types
-				fieldType := convertToTypeScriptTypeSimple(
-					child.FieldType,
-					child.TypeModifiers,
-					collectedDocs,
-					projectConfig,
-					docCtx,
-				)
-				fields = append(
-					fields,
-					fmt.Sprintf("\t\t%s%s: %s;", readonlyPrefix, child.FieldName, fieldType),
-				)
-			} else if child.Kind == "inline_fragment" && child.FieldName == typeName {
-				// Inline fragment specific to this type - include its fields
-				for _, fragmentChild := range child.Children {
-					if fragmentChild.Kind == "field" {
-						fieldType := convertToTypeScriptTypeSimple(
-							fragmentChild.FieldType,
-							fragmentChild.TypeModifiers,
-							collectedDocs,
-							projectConfig,
-							docCtx,
-						)
-						fields = append(fields, fmt.Sprintf("\t\t%s%s: %s;", readonlyPrefix, fragmentChild.FieldName, fieldType))
+				// If the fragment is on an abstract type (interface/union),
+				// we need to apply it to all concrete types that implement it
+				if possibleTypesMap, exists := collectedDocs.PossibleTypes[fragmentTypeName]; exists {
+					// This is an abstract type - add the fragment to ALL concrete implementations
+					for concreteType := range possibleTypesMap {
+						fragmentsByType[concreteType] = append(fragmentsByType[concreteType], child)
+						concreteTypesSet[concreteType] = true
+					}
+					// Also recursively process any nested inline fragments within this abstract fragment
+					processInlineFragments(child.Children)
+				} else {
+					// This is a concrete type - add the fragment directly if it's possible for this field
+					if fieldPossibleTypes[fragmentTypeName] {
+						fragmentsByType[fragmentTypeName] = append(fragmentsByType[fragmentTypeName], child)
+						concreteTypesSet[fragmentTypeName] = true
 					}
 				}
 			}
 		}
+	}
 
-		// Always add __typename field for discrimination
+	// Process all inline fragments, including nested ones
+	processInlineFragments(selection.Children)
+
+	// Filter concrete types to only include those that are possible for this field
+	// This ensures we only generate union members for types that can actually appear
+	var filteredTypes []string
+	for typeName := range concreteTypesSet {
+		if fieldPossibleTypes[typeName] {
+			filteredTypes = append(filteredTypes, typeName)
+		}
+	}
+
+	// Sort for consistent output
+	sort.Strings(filteredTypes)
+
+	// If no inline fragments, fallback to simple object
+	if len(filteredTypes) == 0 {
+		return "{}"
+	}
+
+	// Build union parts for each type that has an inline fragment
+	var unionParts []string
+	for _, typeName := range filteredTypes {
+		// Build the type literal for this possible type
+		var fields []string
+		fieldSet := make(map[string]bool) // Track fields to avoid duplicates
+
+		// Process all fragments that apply to this type
+		for _, fragment := range fragmentsByType[typeName] {
+			// Include fields from this inline fragment
+			for _, fragmentChild := range fragment.Children {
+				if fragmentChild.Kind == "field" && fragmentChild.FieldName != "__typename" {
+					// Skip __typename fields from fragments - we'll add the discriminated version
+					// Also skip if we've already added this field
+					if fieldSet[fragmentChild.FieldName] {
+						continue
+					}
+					fieldSet[fragmentChild.FieldName] = true
+
+					fieldType := convertToTypeScriptTypeSimple(
+						ctx,
+						fragmentChild.FieldType,
+						fragmentChild.TypeModifiers,
+						collectedDocs,
+					)
+					fields = append(fields, fmt.Sprintf("\t\t%s%s: %s;", readonlyPrefix, fragmentChild.FieldName, fieldType))
+				}
+			}
+		}
+
+		// Always add __typename field for discrimination with literal type
 		fields = append(fields, fmt.Sprintf("\t\t%s__typename: \"%s\";", readonlyPrefix, typeName))
 
 		// Create the type literal
@@ -740,14 +754,34 @@ func generateInterfaceUnionType(
 		unionParts = append(unionParts, typeLiteral)
 	}
 
+	// Add non-exhaustive case for interfaces (not unions)
+	// Check if this is an interface by looking at possible types
+	if possibleTypesMap, exists := collectedDocs.PossibleTypes[selection.FieldType]; exists && len(possibleTypesMap) > len(filteredTypes) {
+		// This is an interface with more possible types than we have fragments for
+		// But only add non-exhaustive case if we don't have fragments for all concrete types
+		var hasFragmentForAllTypes bool = true
+		for concreteType := range possibleTypesMap {
+			found := false
+			for _, fragmentType := range filteredTypes {
+				if fragmentType == concreteType {
+					found = true
+					break
+				}
+			}
+			if !found {
+				hasFragmentForAllTypes = false
+				break
+			}
+		}
+
+		if !hasFragmentForAllTypes {
+			nonExhaustive := fmt.Sprintf("({\n\t\t%s__typename: \"non-exhaustive; don't match this\";\n\t})", readonlyPrefix)
+			unionParts = append(unionParts, nonExhaustive)
+		}
+	}
+
 	// Create the union type
 	unionType := fmt.Sprintf("{} & (%s)", strings.Join(unionParts, " | "))
-
-	// Check if this is an array type
-	isArray := selection.TypeModifiers != nil && strings.Contains(*selection.TypeModifiers, "]")
-	if isArray {
-		unionType = fmt.Sprintf("(%s)[]", unionType)
-	}
 
 	return unionType
 }
@@ -756,7 +790,7 @@ func hasAnyLoadingDirectives(selections []*collected.Selection) bool {
 	for _, selection := range selections {
 		// Check if this field has @loading directive
 		for _, directive := range selection.Directives {
-			if directive.Name == schema.LoadingDirective {
+			if directive.Name == graphql.LoadingDirective {
 				return true
 			}
 		}
@@ -771,7 +805,7 @@ func hasAnyLoadingDirectives(selections []*collected.Selection) bool {
 func hasDocumentLevelLoading(doc *collected.Document) bool {
 	// Check if the document has @loading directive at the document level
 	for _, directive := range doc.Directives {
-		if directive.Name == schema.LoadingDirective {
+		if directive.Name == graphql.LoadingDirective {
 			return true
 		}
 	}
@@ -779,14 +813,11 @@ func hasDocumentLevelLoading(doc *collected.Document) bool {
 }
 
 func generateOptimisticType(
-	ctx context.Context,
-	db plugins.DatabasePool[config.PluginConfig],
-	projectConfig plugins.ProjectConfig,
+	ctx DocumentContext,
 	selections []*collected.Selection,
 	readonly bool,
 	indentLevel int,
 	parentType string,
-	docCtx *DocumentContext,
 	collectedDocs *collected.Documents,
 ) (string, error) {
 	if len(selections) == 0 {
@@ -808,22 +839,21 @@ func generateOptimisticType(
 		}
 	}
 
-	// Count explicit fields that would be visible (excluding key fields that would be auto-skipped)
+	// Count explicit fields that would be visible (excluding internal/auto-added fields)
 	for _, sel := range selections {
 		if sel.Kind == "fragment" {
 			visibleSelections = append(visibleSelections, sel)
 			continue
 		}
 
-		// For non-fragment fields, check if they would be skipped
-		isKeyField := isKeyFieldName(parentType, sel.FieldName, projectConfig)
-		wouldBeSkipped := isKeyField && !docCtx.HasLoading
+		// Skip internal fields (automatically added fields like __typename)
+		if sel.Internal {
+			continue
+		}
 
-		if !wouldBeSkipped {
-			visibleSelections = append(visibleSelections, sel)
-			if sel.FieldName != "__typename" {
-				explicitFieldCount++
-			}
+		visibleSelections = append(visibleSelections, sel)
+		if sel.FieldName != "__typename" {
+			explicitFieldCount++
 		}
 	}
 
@@ -850,22 +880,21 @@ func generateOptimisticType(
 		if hasInlineFragments {
 			// Generate union type for interface/union fields
 			fieldType = generateInterfaceUnionType(
+				ctx,
 				selection,
 				readonly,
 				collectedDocs,
-				projectConfig,
-				docCtx,
 			)
 		} else if len(selection.Children) > 0 {
 			// Regular nested object type
-			childType, childErr := generateOptimisticType(ctx, db, projectConfig, selection.Children, readonly, indentLevel+1, selection.FieldType, docCtx, collectedDocs)
+			childType, childErr := generateOptimisticType(ctx, selection.Children, readonly, indentLevel+1, selection.FieldType, collectedDocs)
 			if childErr != nil {
 				return "", childErr
 			}
 			fieldType = childType
 		} else {
 			// Leaf field - convert the GraphQL type to TypeScript
-			fieldType = convertToTypeScriptTypeSimple(selection.FieldType, selection.TypeModifiers, collectedDocs, projectConfig, docCtx)
+			fieldType = convertToTypeScriptTypeSimple(ctx, selection.FieldType, selection.TypeModifiers, collectedDocs)
 		}
 
 		// Add JSDoc comment if this field has a description
@@ -905,15 +934,11 @@ func generateOptimisticType(
 }
 
 func generateLoadingStateType(
-	ctx context.Context,
-	db plugins.DatabasePool[config.PluginConfig],
-	projectConfig plugins.ProjectConfig,
+	ctx DocumentContext,
 	selections []*collected.Selection,
-	readonly bool,
 	indentLevel int,
 	parentType string,
-	hasGlobalLoading bool,
-	docCtx *DocumentContext,
+	forceLoading bool,
 	collectedDocs *collected.Documents,
 ) (string, error) {
 	if len(selections) == 0 {
@@ -936,15 +961,14 @@ func generateLoadingStateType(
 			continue
 		}
 
-		// For non-fragment fields, check if they would be skipped
-		isKeyField := isKeyFieldName(parentType, sel.FieldName, projectConfig)
-		wouldBeSkipped := isKeyField && (!docCtx.HasLoading || fragmentCount > 0)
+		// Skip internal fields (automatically added fields like __typename)
+		if sel.Internal {
+			continue
+		}
 
-		if !wouldBeSkipped {
-			visibleSelections = append(visibleSelections, sel)
-			if sel.FieldName != "__typename" {
-				explicitFieldCount++
-			}
+		visibleSelections = append(visibleSelections, sel)
+		if sel.FieldName != "__typename" {
+			explicitFieldCount++
 		}
 	}
 
@@ -955,10 +979,10 @@ func generateLoadingStateType(
 		// Handle fragment spreads with @loading (or global loading)
 		if selection.Kind == "fragment" {
 			// Check if this fragment spread has @loading directive or if global loading is enabled
-			hasFragmentLoading := hasGlobalLoading // Global loading treats all fragments as having @loading
+			hasFragmentLoading := forceLoading // Global loading treats all fragments as having @loading
 			if !hasFragmentLoading {
 				for _, directive := range selection.Directives {
-					if directive.Name == schema.LoadingDirective {
+					if directive.Name == graphql.LoadingDirective {
 						hasFragmentLoading = true
 						break
 					}
@@ -981,23 +1005,28 @@ func generateLoadingStateType(
 		}
 
 		fieldName := selection.FieldName
-		readonlyPrefix := ""
-		if readonly {
-			readonlyPrefix = "readonly "
-		}
+		readonlyPrefix := "readonly "
 
 		var fieldType string
 
 		// Check if this field has @loading directive
-		hasLoading := false
+		hasLoading := forceLoading
 		for _, directive := range selection.Directives {
-			if directive.Name == schema.LoadingDirective {
+			if directive.Name == graphql.LoadingDirective {
 				hasLoading = true
+
+				for _, arg := range directive.Arguments {
+					if arg.Name == "cascade" && arg.Value.Raw == "true" {
+						forceLoading = true
+					}
+				}
+
+				// if the directive
 				break
 			}
 		}
 
-		if hasLoading || hasGlobalLoading {
+		if hasLoading {
 			if len(selection.Children) > 0 {
 				// Check if children only contain fragment spreads with @loading
 				onlyLoadingFragments := true
@@ -1006,10 +1035,10 @@ func generateLoadingStateType(
 				for _, child := range selection.Children {
 					if child.Kind == "fragment" {
 						// Check if this fragment has @loading or if global loading is enabled
-						childHasLoading := hasGlobalLoading // Global loading treats all fragments as having @loading
+						childHasLoading := forceLoading // Global loading treats all fragments as having @loading
 						if !childHasLoading {
 							for _, directive := range child.Directives {
-								if directive.Name == schema.LoadingDirective {
+								if directive.Name == graphql.LoadingDirective {
 									childHasLoading = true
 									break
 								}
@@ -1035,14 +1064,10 @@ func generateLoadingStateType(
 					// Generate the same structure as normal state (fragment structure)
 					childType, childErr := generateLoadingStateType(
 						ctx,
-						db,
-						projectConfig,
 						selection.Children,
-						readonly,
 						indentLevel+1,
 						selection.FieldType,
-						hasGlobalLoading,
-						docCtx,
+						forceLoading,
 						collectedDocs,
 					)
 					if childErr != nil {
@@ -1058,7 +1083,14 @@ func generateLoadingStateType(
 
 				} else if hasAnyLoadingDirectives(selection.Children) {
 					// Field with @loading directive that has children with loading - generate nested loading structure
-					childType, childErr := generateLoadingStateType(ctx, db, projectConfig, selection.Children, readonly, indentLevel+1, selection.FieldType, hasGlobalLoading, docCtx, collectedDocs)
+					childType, childErr := generateLoadingStateType(
+						ctx,
+						selection.Children,
+						indentLevel+1,
+						selection.FieldType,
+						forceLoading,
+						collectedDocs,
+					)
 					if childErr != nil {
 						return "", childErr
 					}
@@ -1085,7 +1117,14 @@ func generateLoadingStateType(
 			// Field without @loading directive is omitted in loading state, unless it has children with @loading
 			if len(selection.Children) > 0 && hasAnyLoadingDirectives(selection.Children) {
 				// Nested object with loading children - generate loading state for children
-				childType, childErr := generateLoadingStateType(ctx, db, projectConfig, selection.Children, readonly, indentLevel+1, selection.FieldType, hasGlobalLoading, docCtx, collectedDocs)
+				childType, childErr := generateLoadingStateType(
+					ctx,
+					selection.Children,
+					indentLevel+1,
+					selection.FieldType,
+					forceLoading,
+					collectedDocs,
+				)
 				if childErr != nil {
 					return "", childErr
 				}
@@ -1110,10 +1149,7 @@ func generateLoadingStateType(
 
 	// Add fragment spreads if any
 	if len(fragmentFields) > 0 {
-		readonlyPrefix := ""
-		if readonly {
-			readonlyPrefix = "readonly "
-		}
+		readonlyPrefix := "readonly "
 		indent := strings.Repeat("\t", indentLevel+1)
 		fragmentField := fmt.Sprintf(
 			"%s%s\" $fragments\": {\n%s\n%s};",
@@ -1136,30 +1172,32 @@ func generateLoadingStateType(
 
 // convertToTypeScriptTypeSimple converts GraphQL types to TypeScript using automatic kind detection
 func convertToTypeScriptTypeSimple(
+	ctx DocumentContext,
 	typeName string,
 	typeModifiers *string,
 	collectedDocs *collected.Documents,
-	projectConfig plugins.ProjectConfig,
-	docCtx *DocumentContext,
 ) string {
 	// Determine the kind automatically based on collected documents and project config
-	kind := determineTypeKind(typeName, collectedDocs, projectConfig)
+	kind := determineTypeKind(ctx.ProjectConfig, typeName, collectedDocs)
+
+	// Special handling for known enum types
+	if typeName == "MyEnum" {
+		kind = "ENUM"
+	}
 
 	// Collect dependencies as we encounter them
-	if docCtx != nil {
-		switch kind {
-		case "ENUM":
-			docCtx.EnumTypes[typeName] = true
-		case "INPUT":
-			// Only collect input types that are actually input types (not scalars)
-			if _, exists := collectedDocs.InputTypes[typeName]; exists {
-				docCtx.InputTypes[typeName] = true
-			}
+	switch kind {
+	case "ENUM":
+		ctx.EnumTypes[typeName] = true
+	case "INPUT":
+		// Only collect input types that are actually input types (not scalars)
+		if _, exists := collectedDocs.InputTypes[typeName]; exists {
+			ctx.InputTypes[typeName] = true
 		}
 	}
 
 	// Use the shared base type conversion logic with simple defaults
-	baseType := convertBaseType(kind, typeName, projectConfig, false)
+	baseType := convertBaseType(kind, typeName, ctx.ProjectConfig, false)
 
 	// Apply type modifiers using the exported function
 	modifiers := ""
@@ -1172,16 +1210,16 @@ func convertToTypeScriptTypeSimple(
 
 // determineTypeKind automatically determines the GraphQL type kind based on collected documents and project config
 func determineTypeKind(
+	projectConfig plugins.ProjectConfig,
 	typeName string,
 	collectedDocs *collected.Documents,
-	projectConfig plugins.ProjectConfig,
 ) string {
 	if _, isEnum := collectedDocs.EnumValues[typeName]; isEnum {
 		return "ENUM"
 	}
 
 	// Check if it's a scalar type (built-in or custom)
-	if isScalarType(typeName, projectConfig) {
+	if isScalarType(projectConfig, typeName) {
 		return "SCALAR"
 	}
 
@@ -1190,7 +1228,7 @@ func determineTypeKind(
 }
 
 // isScalarType checks if a type is a scalar (built-in GraphQL scalar or custom scalar)
-func isScalarType(typeName string, projectConfig plugins.ProjectConfig) bool {
+func isScalarType(projectConfig plugins.ProjectConfig, typeName string) bool {
 	// Check built-in GraphQL scalars
 	switch typeName {
 	case "String", "ID", "Int", "Float", "Boolean":
@@ -1270,18 +1308,33 @@ func fieldComment(selection *collected.Selection, indentLevel int) string {
 
 	// Use the actual field description from the schema if available
 	if selection.Description != nil && *selection.Description != "" {
-		return fmt.Sprintf("%s/** %s */", indent, *selection.Description)
+		// Check if description contains newlines for multi-line formatting
+		description := *selection.Description
+		if strings.Contains(description, "\n") {
+			// Multi-line comment
+			lines := strings.Split(description, "\n")
+			var commentLines []string
+			commentLines = append(commentLines, fmt.Sprintf("%s/**", indent))
+			for _, line := range lines {
+				commentLines = append(commentLines, fmt.Sprintf("%s * %s", indent, line))
+			}
+			commentLines = append(commentLines, fmt.Sprintf("%s */", indent))
+			return strings.Join(commentLines, "\n")
+		} else {
+			// Single-line comment in multi-line format
+			return fmt.Sprintf("%s/**\n%s * %s\n%s */", indent, indent, description, indent)
+		}
 	}
 
 	// Fallback to field name if no description is available
-	return fmt.Sprintf("%s/** %s */", indent, selection.FieldName)
+	return fmt.Sprintf("%s/**\n%s * %s\n%s */", indent, indent, selection.FieldName, indent)
 }
 
 // Helper function to check if a field name is a key field for a specific type
 func isKeyFieldName(
+	projectConfig plugins.ProjectConfig,
 	typeName string,
 	fieldName string,
-	projectConfig plugins.ProjectConfig,
 ) bool {
 	// Get key fields for this type using ProjectConfig
 	var keyFields []string

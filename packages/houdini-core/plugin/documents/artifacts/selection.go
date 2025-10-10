@@ -14,8 +14,8 @@ import (
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
 	"code.houdinigraphql.com/packages/houdini-core/plugin/documents/collected"
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 const spacing = "    "
@@ -139,7 +139,7 @@ func GenerateSelectionDocument(
 	partial := projectConfig.DefaultPartial
 	for _, directive := range doc.Directives {
 		switch directive.Name {
-		case schema.DedupeDirective:
+		case graphql.DedupeDirective:
 			cancel := "last"
 			match := "Variables"
 			for _, arg := range directive.Arguments {
@@ -159,7 +159,7 @@ func GenerateSelectionDocument(
         "match": "%s"
     },`, cancel, match)
 
-		case schema.CacheDirective:
+		case graphql.CacheDirective:
 			for _, arg := range directive.Arguments {
 				if arg.Name == "policy" {
 					cachePolicy = arg.Value.Raw
@@ -185,7 +185,7 @@ func GenerateSelectionDocument(
 	for _, variable := range doc.Variables {
 		for _, directive := range variable.Directives {
 			switch directive.Name {
-			case schema.RuntimeScalarDirective:
+			case graphql.RuntimeScalarDirective:
 				for _, arg := range directive.Arguments {
 					if arg.Name != "type" {
 						continue
@@ -199,7 +199,7 @@ func GenerateSelectionDocument(
 	}
 	for _, directive := range doc.Directives {
 		switch directive.Name {
-		case schema.LoadingDirective:
+		case graphql.LoadingDirective:
 			flags.HasLoading = "global"
 			forceLoading = true
 		}
@@ -473,7 +473,7 @@ func stringifySelection(
 		hasLoading := false
 		for _, directive := range selection.Directives {
 			switch directive.Name {
-			case schema.LoadingDirective:
+			case graphql.LoadingDirective:
 				flags.HasLoading = "local"
 				parentSelectionFlags.HasLoading = true
 				hasLoading = true
@@ -521,7 +521,7 @@ func stringifySelection(
 			var argumentsBuilder strings.Builder
 			for _, directive := range selection.Directives {
 				switch directive.Name {
-				case schema.WithDirective:
+				case graphql.WithDirective:
 					for _, arg := range directive.Arguments {
 						fmt.Fprintf(&argumentsBuilder, `
 %s"%s": %s,`, indent5, arg.Name, serializeFragmentArgument(arg.Value, level+4))
@@ -778,7 +778,7 @@ func keyField(field *collected.Selection, paginatedMode *string) string {
 			"offset": true,
 		}
 		if _, ok := paginationArgs[arg.Name]; ok && paginatedMode != nil &&
-			*paginatedMode == schema.PaginationModeInfinite {
+			*paginatedMode == graphql.PaginationModeInfinite {
 			continue
 		}
 
@@ -875,15 +875,15 @@ func stringifyFieldSelection(
 
 	for _, directive := range selection.Directives {
 		switch directive.Name {
-		case schema.OptimisticKeyDirective:
+		case graphql.OptimisticKeyDirective:
 			optimisticKey = fmt.Sprintf(`
 %s"optimisticKey": true,`, indent4)
 			flags.OptimisticKeys = true
-		case schema.RequiredDirective:
+		case graphql.RequiredDirective:
 			hasRequiredDirective = true
 			required = fmt.Sprintf(`
 %s"required": true,`, indent4)
-		case schema.LoadingDirective:
+		case graphql.LoadingDirective:
 			hasLoading = true
 			for _, arg := range directive.Arguments {
 				if arg.Name == "cascade" && arg.Value.Raw == "true" {
@@ -1032,7 +1032,7 @@ func stringifyFieldSelection(
 
 			case "field":
 				for _, childDirective := range child.Directives {
-					if childDirective.Name == schema.RequiredDirective {
+					if childDirective.Name == graphql.RequiredDirective {
 						isNullable = true
 						childHasRequired = true
 					}
@@ -1040,14 +1040,14 @@ func stringifyFieldSelection(
 			case "fragment":
 				definition := docs.Selections[child.FieldName]
 				for _, definitionDirective := range definition.Directives {
-					if definitionDirective.Name == schema.RequiredDirective {
+					if definitionDirective.Name == graphql.RequiredDirective {
 						isNullable = true
 						childHasRequired = true
 					}
 				}
 				for _, subSel := range definition.Selections {
 					for _, childDirective := range subSel.Directives {
-						if childDirective.Name == schema.RequiredDirective {
+						if childDirective.Name == graphql.RequiredDirective {
 							isNullable = true
 							childHasRequired = true
 						}
@@ -1283,7 +1283,7 @@ func extractOperation(
 	for _, directive := range selection.Directives {
 		switch directive.Name {
 		// if we encounter a when directive
-		case schema.WhenDirective:
+		case graphql.WhenDirective:
 			attrs := ""
 			// each arg contributes a condition that needs to be matched against
 			for _, arg := range directive.Arguments {
@@ -1300,7 +1300,7 @@ func extractOperation(
 %s},`, indent1, attrs, indent1)
 
 			// if we encounter a when_not directive
-		case schema.WhenNotDirective:
+		case graphql.WhenNotDirective:
 			attrs := ""
 			// each arg contributes a condition that needs to be matched against
 			for _, arg := range directive.Arguments {
@@ -1317,7 +1317,7 @@ func extractOperation(
 %s},`, indent1, attrs, indent1)
 
 			// parentID directive
-		case schema.ParentIDDirective:
+		case graphql.ParentIDDirective:
 			parentID = serializeFragmentArgument(directive.Arguments[0].Value, level-1)
 		}
 	}
@@ -1329,8 +1329,8 @@ func extractOperation(
 			return nil
 		}
 		for _, directive := range selection.Directives {
-			if strings.HasSuffix(directive.Name, schema.ListOperationSuffixDelete) {
-				targetType := stripSuffix(directive.Name, schema.ListOperationSuffixDelete)
+			if strings.HasSuffix(directive.Name, graphql.ListOperationSuffixDelete) {
+				targetType := stripSuffix(directive.Name, graphql.ListOperationSuffixDelete)
 				return &CollectedOperation{
 					Type:     targetType,
 					Action:   "delete",
@@ -1354,17 +1354,17 @@ func extractOperation(
 
 		// we found a fragment so now we should look for one of the magic suffix
 		switch {
-		case strings.Contains(selection.FieldName, schema.ListOperationSuffixInsert):
-			listName = stripSuffix(selection.FieldName, schema.ListOperationSuffixInsert)
+		case strings.Contains(selection.FieldName, graphql.ListOperationSuffixInsert):
+			listName = stripSuffix(selection.FieldName, graphql.ListOperationSuffixInsert)
 			action = "insert"
-		case strings.Contains(selection.FieldName, schema.ListOperationSuffixDelete):
-			listName = stripSuffix(selection.FieldName, schema.ListOperationSuffixDelete)
+		case strings.Contains(selection.FieldName, graphql.ListOperationSuffixDelete):
+			listName = stripSuffix(selection.FieldName, graphql.ListOperationSuffixDelete)
 			action = "delete"
-		case strings.Contains(selection.FieldName, schema.ListOperationSuffixRemove):
-			listName = stripSuffix(selection.FieldName, schema.ListOperationSuffixRemove)
+		case strings.Contains(selection.FieldName, graphql.ListOperationSuffixRemove):
+			listName = stripSuffix(selection.FieldName, graphql.ListOperationSuffixRemove)
 			action = "remove"
-		case strings.Contains(selection.FieldName, schema.ListOperationSuffixToggle):
-			listName = stripSuffix(selection.FieldName, schema.ListOperationSuffixToggle)
+		case strings.Contains(selection.FieldName, graphql.ListOperationSuffixToggle):
+			listName = stripSuffix(selection.FieldName, graphql.ListOperationSuffixToggle)
 			action = "toggle"
 
 		default:
@@ -1380,11 +1380,11 @@ func extractOperation(
 		// to find the position we need to look at directives applied to the fragment
 		for _, dir := range selection.Directives {
 			switch dir.Name {
-			case schema.PrependDirective:
+			case graphql.PrependDirective:
 				position = "first"
-			case schema.AppendDirective:
+			case graphql.AppendDirective:
 				position = "last"
-			case schema.AllListsDirective:
+			case graphql.AllListsDirective:
 				target = "all"
 			}
 		}

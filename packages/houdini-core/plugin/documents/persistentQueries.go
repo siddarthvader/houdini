@@ -116,7 +116,7 @@ func GeneratePersistentQueries(
 			SELECT DISTINCT fragment_name FROM fragment_deps
 			ORDER BY fragment_name
 		`, &sqlitex.ExecOptions{
-			Args: []interface{}{op.ID},
+			Args: []any{op.ID},
 			ResultFunc: func(stmt *sqlite.Stmt) error {
 				fragmentName := stmt.ColumnText(0)
 				fragmentNames = append(fragmentNames, fragmentName)

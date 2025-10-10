@@ -8,8 +8,8 @@ import (
 	"sort"
 
 	"code.houdinigraphql.com/packages/houdini-core/plugin/documents/collected"
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 func FlattenSelection(
@@ -97,11 +97,11 @@ func (c *fieldCollection) Add(
 
 	// look to see if masking was explicitly enabled
 	for _, directive := range selection.Directives {
-		if directive.Name == schema.EnableMaskDirective {
+		if directive.Name == graphql.EnableMaskDirective {
 			hidden = true
 			break
 		}
-		if directive.Name == schema.DisableMaskDirective {
+		if directive.Name == graphql.DisableMaskDirective {
 			hidden = false
 			break
 		}

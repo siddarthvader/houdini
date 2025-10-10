@@ -8,8 +8,8 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
-	"code.houdinigraphql.com/packages/houdini-core/plugin/schema"
 	"code.houdinigraphql.com/plugins"
+	"code.houdinigraphql.com/plugins/graphql"
 )
 
 func PreparePaginationDocuments(
@@ -314,7 +314,7 @@ func PreparePaginationDocuments(
 	ARGUMENTS:
 		for _, arg := range argumentsToAdd {
 			// if the variable is already defined then we have a value ID to use as the default value
-			var defaultValue interface{}
+			var defaultValue any
 			for _, appliedArg := range arguments {
 				if appliedArg.Argument == arg.Name {
 					if appliedArg.Kind != "Variable" {
@@ -403,7 +403,7 @@ func PreparePaginationDocuments(
 		if docType == "fragment" {
 			// insert a document with a name derived from the fragment name
 			err = db.ExecStatement(insertDocument, map[string]any{
-				"name":         schema.FragmentPaginationQueryName(documentName),
+				"name":         graphql.FragmentPaginationQueryName(documentName),
 				"raw_document": rawDocument,
 			})
 			if err != nil {
@@ -428,7 +428,7 @@ func PreparePaginationDocuments(
 			// we need to add the with directive to the fragment spread
 			err = db.ExecStatement(insertSelectionDirective, map[string]any{
 				"selection": fragmentSpreadID,
-				"directive": schema.WithDirective,
+				"directive": graphql.WithDirective,
 			})
 			if err != nil {
 				errs.Append(plugins.WrapError(err))
@@ -465,7 +465,7 @@ func PreparePaginationDocuments(
 				}
 
 				// if the variable is already defined then we have a value ID to use as the default value
-				var defaultValue interface{}
+				var defaultValue any
 				for _, appliedArg := range arguments {
 					if appliedArg.Argument == arg.Name {
 						if appliedArg.Kind != "Variable" {
@@ -596,7 +596,7 @@ func PreparePaginationDocuments(
 			// add the dedupe directive to the document
 			err = db.ExecStatement(insertDocumentDirectives, map[string]any{
 				"document":  queryDocument,
-				"directive": schema.DedupeDirective,
+				"directive": graphql.DedupeDirective,
 			})
 			if err != nil {
 				errs.Append(plugins.WrapError(err))
