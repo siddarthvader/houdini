@@ -137,9 +137,14 @@ func registerWebsocketGenerateHandler(plugin HoudiniPlugin[config.PluginConfig])
 			log.Printf("Warning: taskId is empty for GenerateDocuments hook")
 		}
 
+		// put the wsconn & msgId into the context
+		ctx := ContextWithWSConn(context.Background(), conn)
+		log.Printf("WSMessageID: %s", msg.ID)
+		ctx = ContextWithWSMessageID(ctx, msg.ID)
+
 		// Set up context with taskID and plugin directory
-		ctx := ContextWithPluginDir(
-			ContextWithTaskID(context.Background(), taskID),
+		ctx = ContextWithPluginDir(
+			ContextWithTaskID(ctx, taskID),
 			msg.PluginDirectory,
 		)
 

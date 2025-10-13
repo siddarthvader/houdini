@@ -3,6 +3,8 @@ package plugins
 import (
 	"context"
 	"strconv"
+
+	"github.com/gorilla/websocket"
 )
 
 func ContextWithTaskID(ctx context.Context, taskID string) context.Context {
@@ -32,4 +34,28 @@ func TaskIDFromContext(ctx context.Context) *int64 {
 
 func PluginDirFromContext(ctx context.Context) string {
 	return ctx.Value("pluginDir").(string)
+}
+
+func ContextWithWSConn(ctx context.Context, conn *websocket.Conn) context.Context {
+	return context.WithValue(ctx, "wsConn", conn)
+}
+
+func WSConnFromContext(ctx context.Context) *websocket.Conn {
+	conn := ctx.Value("wsConn")
+	if conn == nil {
+		return nil
+	}
+	return conn.(*websocket.Conn)
+}
+
+func ContextWithWSMessageID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, "wsMessageID", id)
+}
+
+func WSMessageIDFromContext(ctx context.Context) string {
+	id := ctx.Value("wsMessageID")
+	if id == nil {
+		return ""
+	}
+	return id.(string)
 }

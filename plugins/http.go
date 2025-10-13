@@ -211,6 +211,14 @@ func handleGenerateRuntime[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
 ) func(ctx context.Context) ([]string, error) {
 	return func(ctx context.Context) ([]string, error) {
+
+		if conn := WSConnFromContext(ctx); conn != nil {
+			conn.WriteJSON(WebSocketResponse{
+				ID:    ctx.Value("wsMessageID").(string),
+				Type:  "1error",
+				Error: "TEST: This is a simulated non-fatal error during generation",
+			})
+		}
 		paths := []string{}
 
 		if generate, ok := plugin.(GenerateRuntime); ok {
