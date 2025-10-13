@@ -164,6 +164,7 @@ export type ConfigFile = {
 }
 
 export type RuntimeScalarPayload = {
+	// @ts-ignore
 	session?: App.Session | null | undefined
 }
 
