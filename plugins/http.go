@@ -37,14 +37,7 @@ func pluginHooks[PluginConfig any](
 		InjectContext(EventHook(handleAfterLoad(plugin))))
 
 	// --- GenerateRuntime is triggered for IncludeRuntime OR GenerateRuntime
-	_, isIncludeRuntime := plugin.(IncludeRuntime)
-	_, isGenerateRuntime := plugin.(GenerateRuntime)
-	_, isConfig := plugin.(Config)
-	register(
-		"/generateruntime", "GenerateRuntime",
-		isIncludeRuntime || isGenerateRuntime || isConfig,
-		InjectContext(EventHookWithResponse(handleGenerateRuntime(plugin))),
-	)
+	// moved to websocket
 
 	// --- Environment
 	if p, ok := plugin.(Environment); ok {
@@ -59,16 +52,10 @@ func pluginHooks[PluginConfig any](
 	}
 
 	// --- AfterExtract
-	if p, ok := plugin.(AfterExtract); ok {
-		register("/afterextract", "AfterExtract", true,
-			InjectContext(EventHook(p.AfterExtract)))
-	}
+	// moved to websocket
 
 	// --- Schema
-	if p, ok := plugin.(Schema); ok {
-		register("/schema", "Schema", true,
-			InjectContext(EventHook(p.Schema)))
-	}
+	// moved to websocket
 
 	// --- BeforeValidate
 	if p, ok := plugin.(BeforeValidate); ok {
@@ -95,10 +82,7 @@ func pluginHooks[PluginConfig any](
 	}
 
 	// --- GenerateDocuments
-	if p, ok := plugin.(GenerateDocuments); ok {
-		register("/generatedocuments", "GenerateDocuments", true,
-			InjectContext(EventHookWithResponse(p.GenerateDocuments)))
-	}
+	// moved to websocket
 
 	// --- AfterGenerate
 	if p, ok := plugin.(AfterGenerate); ok {
@@ -207,64 +191,6 @@ type ExtractDocumentsInput struct {
 	Filepaths []string `json:"filepaths"`
 }
 
-func handleGenerateRuntime[PluginConfig any](
-	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) ([]string, error) {
-	return func(ctx context.Context) ([]string, error) {
-
-		if conn := WSConnFromContext(ctx); conn != nil {
-			conn.WriteJSON(WebSocketResponse{
-				ID:    ctx.Value("wsMessageID").(string),
-				Type:  "1error",
-				Error: "TEST: This is a simulated non-fatal error during generation",
-			})
-		}
-		paths := []string{}
-
-		if generate, ok := plugin.(GenerateRuntime); ok {
-			filepaths, err := generate.GenerateRuntime(ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			paths = append(paths, filepaths...)
-		}
-
-		// if the plugin defines a runtime to be included then we should include it now
-		if includeRuntime, ok := plugin.(IncludeRuntime); ok {
-			runtimeDir, err := includeRuntime.IncludeRuntime(ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			config, err := plugin.Database().ProjectConfig(ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			runtimePath := path.Join(PluginDirFromContext(ctx), runtimeDir)
-			targetPath := config.PluginRuntimeDirectory(plugin.Name())
-
-			// the plugin could have defined a transform for the runtime
-			transform := func(ctx context.Context, source string, content string) (string, error) { return content, nil }
-			if transformer, ok := plugin.(TransformRuntime); ok {
-				transform = transformer.TransformRuntime
-			}
-
-			// copy the plugin runtime to the runtime directory
-			updated, err := RecursiveCopy(ctx, runtimePath, targetPath, transform)
-			if err != nil {
-				return nil, err
-			}
-
-			// add any updated paths to the list
-			paths = append(paths, updated...)
-		}
-
-		// nothing went wrong
-		return paths, nil
-	}
-}
 
 func handleAfterLoad[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],

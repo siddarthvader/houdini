@@ -205,42 +205,45 @@ export async function codegen_setup(
 	) => {
 		const { port, directory } = plugin_specs[name]
 
-		// Use WebSocket for GenerateDocuments hook
-		if (hook === 'GenerateDocuments') {
+		const migrated_endpoints = ['GenerateDocuments', 'GenerateRuntime', 'Schema', 'AfterExtract']
+		// Use WebSocket for migrated hooks
+		if (migrated_endpoints.includes(hook)) {
 			const wsUrl = `ws://localhost:${port}/ws`
 			return await invoke_hook_websocket(name, hook, payload, task_id, wsUrl, directory)
-		}
-
-		// make the request
-		const response = await fetch(`http://localhost:${port}/${hook.toLowerCase()}`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'X-Task-ID': task_id?.toString() ?? '',
-				'X-Plugin-Directory': directory,
-			},
-			body: JSON.stringify(payload),
-		})
-
-		// if the request failed, throw an error
-		if (!response.ok) {
-			if (response.status === 404) {
-				throw new Error(`Plugin ${name} does not support hook ${hook}`)
-			}
-			const responseJSON = await response.json()
-			const errors: HookError[] = Array.isArray(responseJSON) ? responseJSON : [responseJSON]
-			errors.forEach((error) => {
-				format_hook_error(config.root_dir, error, name)
+		} else {
+			// make the request
+			const response = await fetch(`http://localhost:${port}/${hook.toLowerCase()}`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-Task-ID': task_id?.toString() ?? '',
+					'X-Plugin-Directory': directory,
+				},
+				body: JSON.stringify(payload),
 			})
-			// errors
-			throw new Error(`Failed to call ${name}/${hook.toLowerCase()}`)
+
+			// if the request failed, throw an error
+			if (!response.ok) {
+				if (response.status === 404) {
+					throw new Error(`Plugin ${name} does not support hook ${hook}`)
+				}
+				const responseJSON = await response.json()
+				const errors: HookError[] = Array.isArray(responseJSON)
+					? responseJSON
+					: [responseJSON]
+				errors.forEach((error) => {
+					format_hook_error(config.root_dir, error, name)
+				})
+				// errors
+				throw new Error(`Failed to call ${name}/${hook.toLowerCase()}`)
+			}
+			// look at the response headers, and if the content type is application/json, parse the body
+			const contentType = response.headers.get('content-type')
+			if (contentType && contentType.includes('application/json')) {
+				return await response.json()
+			}
+			return await response.text()
 		}
-		// look at the response headers, and if the content type is application/json, parse the body
-		const contentType = response.headers.get('content-type')
-		if (contentType && contentType.includes('application/json')) {
-			return await response.json()
-		}
-		return await response.text()
 	}
 
 	const invoke_hook_websocket = async (

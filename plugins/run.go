@@ -65,6 +65,7 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 	}
 
 	wsHooks := pluginWebsocketHooks(ctx, plugin)
+	log.Printf("WSHooks: %v", wsHooks)
 	_, _ = json.Marshal(wsHooks) // We don't actually need the marshaled value, just checking for errors
 
 	// obtain a websocket upgrader
