@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"path"
 	"sync"
 	"time"
@@ -35,141 +34,71 @@ var (
 	wsMutex    = sync.Mutex{}
 )
 
-func pluginWebsocketHooks(ctx context.Context, plugin HoudiniPlugin[config.PluginConfig]) error {
-	hooks := map[string]bool{}
+func pluginWebsocketHooks(ctx context.Context, plugin HoudiniPlugin[config.PluginConfig]) []string {
+	hooks := []string{}
 
 	if _, ok := plugin.(GenerateRuntime); ok {
-		hooks["GenerateRuntime"] = true
-		registerWebsocketGenerateHandler(plugin)
+		hooks = append(hooks, "GenerateRuntime")
+		registerWSHandler("GenerateRuntime", handleGenerateRuntime(plugin))
 	}
-	// generate endpoint for websocket
+
 	if _, ok := plugin.(GenerateDocuments); ok {
-		hooks["GenerateDocuments"] = true
-		registerWebsocketDocumentsHandler(plugin)
+		hooks = append(hooks, "GenerateDocuments")
+		registerWSHandler("GenerateDocuments", handleGenerateDocuments(plugin))
 	}
 
 	if _, ok := plugin.(Schema); ok {
-		hooks["Schema"] = true
-		registerWebsocketSchemaHandler(plugin)
+		hooks = append(hooks, "Schema")
+		registerWSHandler("Schema", handleSchema(plugin))
 	}
 
 	if _, ok := plugin.(AfterExtract); ok {
-		hooks["AfterExtract"] = true
-		registerWebsocketAfterExtractHandler(plugin)
+		hooks = append(hooks, "AfterExtract")
+		registerWSHandler("AfterExtract", handleAfterExtract(plugin))
 	}
 
-	return nil
+	return hooks
 }
 
-func HandleWebSocketConnection(conn *websocket.Conn) {
-	log.Printf("WebSocket connection established from %s", conn.RemoteAddr())
-	defer log.Printf("WebSocket connection closed from %s", conn.RemoteAddr())
-
-	// ping
-	conn.SetPingHandler(func(string) error {
-		// pong
-		return conn.WriteMessage(websocket.PongMessage, []byte{})
-	})
-
-	conn.SetReadDeadline(time.Now().Add(time.Second * 60))
-
-	// message loop
-	for {
-		var msg WebSocketMessage
-		if err := conn.ReadJSON(&msg); err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.
-				CloseAbnormalClosure) {
-				log.Printf("WebSocket connection closed normally from %s: %v", conn.RemoteAddr(),
-					err)
-			} else {
-				log.Printf("WebSocket read error from %s: %v", conn.RemoteAddr(), err)
-			}
-			break
-		}
-
-		// can read Now, reset read deadling
-		conn.SetReadDeadline(time.Now().Add(time.Second * 60))
-
-		log.Printf("Received messaes from %s that is %s, %v", conn.RemoteAddr(), msg.Type, msg)
-
-		wsMutex.Lock()
-		handler, exists := wsHandlers[msg.Hook]
-		wsMutex.Unlock()
-
-		if exists {
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Printf("Handler panic for hook %s: %v", msg.Hook, r)
-						sendErrorResponse(conn, msg.ID, fmt.Sprintf("Handler panic: %v", r))
-					}
-				}()
-
-				handler(conn, msg)
-			}()
-		} else {
-			log.Printf("No handler for hook %s", msg.Hook)
-			sendErrorResponse(conn, msg.ID, fmt.Sprintf("No handler for hook %s", msg.Hook))
-		}
-	}
-}
-
-func sendErrorResponse(conn *websocket.Conn, id string, err string) {
-	response := WebSocketResponse{
-		ID:    id,
-		Type:  "response",
-		Error: err,
-	}
-	if writeErr := conn.WriteJSON(response); writeErr != nil {
-		log.Printf("Failed to write response: %s", writeErr.Error())
-	}
-}
-
-func registerWebsocketGenerateHandler(plugin HoudiniPlugin[config.PluginConfig]) {
+// Register a WebSocket handler
+func registerWSHandler[T any](hookName string, handler func(ctx context.Context) (T, error)) {
 	wsMutex.Lock()
 	defer wsMutex.Unlock()
+	wsHandlers[hookName] = createWSHandler(hookName, handler)
+}
 
-	wsHandlers["GenerateRuntime"] = func(conn *websocket.Conn, msg WebSocketMessage) {
+// handler wrapper that handles common request/response logic
+func createWSHandler[T any](
+	hookName string,
+	handler func(ctx context.Context) (T, error),
+) func(*websocket.Conn, WebSocketMessage) {
+	return func(conn *websocket.Conn, msg WebSocketMessage) {
+		// validate request type
 		if msg.Type != "request" {
-			response := WebSocketResponse{
-				ID:    msg.ID,
-				Type:  "response",
-				Error: "Expected request type",
-			}
-			conn.WriteJSON(response)
+			sendErrorResponse(conn, msg.ID, "Expected request type")
 			return
 		}
 
-		// Handle empty or missing taskId
-		taskID := msg.TaskID
-		if taskID == "" {
-			log.Printf(" taskId is empty for GenerateDocuments hook")
+		if msg.TaskID == "" {
+			log.Printf(" taskId is empty for %s hook", hookName)
 		}
 
-		// put the wsconn & msgId into the context
+		// context with all necessary values
 		ctx := ContextWithWSConn(context.Background(), conn)
-		log.Printf("WSMessageID: %s", msg.ID)
 		ctx = ContextWithWSMessageID(ctx, msg.ID)
+		ctx = ContextWithTaskID(ctx, msg.TaskID)
+		ctx = ContextWithPluginDir(ctx, msg.PluginDirectory)
 
-		// Set up context with taskID and plugin directory
-		ctx = ContextWithPluginDir(
-			ContextWithTaskID(ctx, taskID),
-			msg.PluginDirectory,
-		)
+		log.Printf("WSMessageID: %s", msg.ID)
 
-		result, err := handleGenerateRuntime(plugin)(ctx)
+		// execute
+		result, err := handler(ctx)
 		if err != nil {
-			response := WebSocketResponse{
-				ID:    msg.ID,
-				Type:  "response",
-				Error: err.Error(),
-			}
-			if writeErr := conn.WriteJSON(response); writeErr != nil {
-				log.Printf("Failed to write response: %s", writeErr.Error())
-			}
+			sendErrorResponse(conn, msg.ID, err.Error())
 			return
 		}
 
+		// success response
 		response := WebSocketResponse{
 			ID:     msg.ID,
 			Type:   "response",
@@ -179,111 +108,6 @@ func registerWebsocketGenerateHandler(plugin HoudiniPlugin[config.PluginConfig])
 			log.Printf("Failed to write response: %s", writeErr.Error())
 		}
 	}
-}
-
-func registerWebsocketDocumentsHandler(plugin HoudiniPlugin[config.PluginConfig]) {
-	wsMutex.Lock()
-	defer wsMutex.Unlock()
-	wsHandlers["GenerateDocuments"] = func(conn *websocket.Conn, msg WebSocketMessage) {
-		if msg.Type != "request" {
-			response := WebSocketResponse{
-				ID:    msg.ID,
-				Type:  "response",
-				Error: "Expected request type",
-			}
-			conn.WriteJSON(response)
-			return
-		}
-		// Handle empty or missing taskId
-		taskID := msg.TaskID
-		if taskID == "" {
-			log.Printf(" taskId is empty for GenerateDocuments hook")
-		}
-		// put the wsconn & msgId into the context
-		ctx := ContextWithWSConn(context.Background(), conn)
-		log.Printf("WSMessageID: %s", msg.ID)
-		ctx = ContextWithWSMessageID(ctx, msg.ID)
-		ctx = ContextWithPluginDir(
-			ContextWithTaskID(ctx, taskID),
-			msg.PluginDirectory,
-		)
-		result, err := handleGenerateDocuments(plugin)(ctx)
-		if err != nil {
-			response := WebSocketResponse{
-				ID:    msg.ID,
-				Type:  "response",
-				Error: err.Error(),
-			}
-			if writeErr := conn.WriteJSON(response); writeErr != nil {
-				log.Printf("Failed to write response: %s", writeErr.Error())
-			}
-			return
-		}
-		response := WebSocketResponse{
-			ID:     msg.ID,
-			Type:   "response",
-			Result: result,
-		}
-		if writeErr := conn.WriteJSON(response); writeErr != nil {
-			log.Printf("Failed to write response: %s", writeErr.Error())
-		}
-	}
-}
-
-func registerWebsocketSchemaHandler(plugin HoudiniPlugin[config.PluginConfig]) {
-	wsMutex.Lock()
-	defer wsMutex.Unlock()
-	wsHandlers["Schema"] = func(conn *websocket.Conn, msg WebSocketMessage) {
-		if msg.Type != "request" {
-			response := WebSocketResponse{
-				ID:    msg.ID,
-				Type:  "response",
-				Error: "Expected request type",
-			}
-			conn.WriteJSON(response)
-			return
-		}
-		// Handle empty or missing taskId
-		taskID := msg.TaskID
-		if taskID == "" {
-			log.Printf(" taskId is empty for Schema hook")
-		}
-		// put the wsconn & msgId into the context
-		ctx := ContextWithWSConn(context.Background(), conn)
-		log.Printf("WSMessageID: %s", msg.ID)
-		ctx = ContextWithWSMessageID(ctx, msg.ID)
-		ctx = ContextWithPluginDir(
-			ContextWithTaskID(ctx, taskID),
-			msg.PluginDirectory,
-		)
-		err := handleSchema(plugin)(ctx)
-		if err != nil {
-			response := WebSocketResponse{
-				ID:    msg.ID,
-				Type:  "response",
-				Error: err.Error(),
-			}
-			if writeErr := conn.WriteJSON(response); writeErr != nil {
-				log.Printf("Failed to write response: %s", writeErr.Error())
-			}
-			return
-		}
-		response := WebSocketResponse{
-			ID:     msg.ID,
-			Type:   "response",
-			Result: nil,
-		}
-		if writeErr := conn.WriteJSON(response); writeErr != nil {
-			log.Printf("Failed to write response: %s", writeErr.Error())
-		}
-	}
-}
-
-func handleWebsocketHookHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Received HTTP POST request to /ws endpoint")
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok","message":"HTTP fallback for WebSocket endpoint"}`))
 }
 
 // generator plugin functions
@@ -358,71 +182,87 @@ func handleGenerateDocuments[PluginConfig any](
 
 func handleSchema[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) error {
-	return func(ctx context.Context) error {
+) func(ctx context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
 		if schema, ok := plugin.(Schema); ok {
-			return schema.Schema(ctx)
+			return nil, schema.Schema(ctx)
 		}
-		return fmt.Errorf("schema hook not implemented")
-	}
-}
-
-func registerWebsocketAfterExtractHandler(plugin HoudiniPlugin[config.PluginConfig]) {
-	wsMutex.Lock()
-	defer wsMutex.Unlock()
-	wsHandlers["AfterExtract"] = func(conn *websocket.Conn, msg WebSocketMessage) {
-		if msg.Type != "request" {
-			response := WebSocketResponse{
-				ID:    msg.ID,
-				Type:  "response",
-				Error: "Expected request type",
-			}
-			conn.WriteJSON(response)
-			return
-		}
-		// Handle empty or missing taskId
-		taskID := msg.TaskID
-		if taskID == "" {
-			log.Printf(" taskId is empty for AfterExtract hook")
-		}
-		// put the wsconn & msgId into the context
-		ctx := ContextWithWSConn(context.Background(), conn)
-		log.Printf("WSMessageID: %s", msg.ID)
-		ctx = ContextWithWSMessageID(ctx, msg.ID)
-		ctx = ContextWithPluginDir(
-			ContextWithTaskID(ctx, taskID),
-			msg.PluginDirectory,
-		)
-		err := handleAfterExtract(plugin)(ctx)
-		if err != nil {
-			response := WebSocketResponse{
-				ID:    msg.ID,
-				Type:  "response",
-				Error: err.Error(),
-			}
-			if writeErr := conn.WriteJSON(response); writeErr != nil {
-				log.Printf("Failed to write response: %s", writeErr.Error())
-			}
-			return
-		}
-		response := WebSocketResponse{
-			ID:     msg.ID,
-			Type:   "response",
-			Result: nil,
-		}
-		if writeErr := conn.WriteJSON(response); writeErr != nil {
-			log.Printf("Failed to write response: %s", writeErr.Error())
-		}
+		return nil, fmt.Errorf("schema hook not implemented")
 	}
 }
 
 func handleAfterExtract[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) error {
-	return func(ctx context.Context) error {
+) func(ctx context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
 		if afterExtract, ok := plugin.(AfterExtract); ok {
-			return afterExtract.AfterExtract(ctx)
+			return nil, afterExtract.AfterExtract(ctx)
 		}
-		return fmt.Errorf("afterExtract hook not implemented")
+		return nil, fmt.Errorf("afterExtract hook not implemented")
+	}
+}
+
+// ws connection handler utils
+func HandleWebSocketConnection(conn *websocket.Conn) {
+	log.Printf("WebSocket connection established from %s", conn.RemoteAddr())
+	defer log.Printf("WebSocket connection closed from %s", conn.RemoteAddr())
+
+	// ping
+	conn.SetPingHandler(func(string) error {
+		// pong
+		return conn.WriteMessage(websocket.PongMessage, []byte{})
+	})
+
+	conn.SetReadDeadline(time.Now().Add(time.Second * 60))
+
+	// message loop
+	for {
+		var msg WebSocketMessage
+		if err := conn.ReadJSON(&msg); err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.
+				CloseAbnormalClosure) {
+				log.Printf("WebSocket connection closed normally from %s: %v", conn.RemoteAddr(),
+					err)
+			} else {
+				log.Printf("WebSocket read error from %s: %v", conn.RemoteAddr(), err)
+			}
+			break
+		}
+
+		// can read Now, reset read deadling
+		conn.SetReadDeadline(time.Now().Add(time.Second * 60))
+
+		log.Printf("Received messaes from %s that is %s, %v", conn.RemoteAddr(), msg.Type, msg)
+
+		wsMutex.Lock()
+		handler, exists := wsHandlers[msg.Hook]
+		wsMutex.Unlock()
+
+		if exists {
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("Handler panic for hook %s: %v", msg.Hook, r)
+						sendErrorResponse(conn, msg.ID, fmt.Sprintf("Handler panic: %v", r))
+					}
+				}()
+
+				handler(conn, msg)
+			}()
+		} else {
+			log.Printf("No handler for hook %s", msg.Hook)
+			sendErrorResponse(conn, msg.ID, fmt.Sprintf("No handler for hook %s", msg.Hook))
+		}
+	}
+}
+
+func sendErrorResponse(conn *websocket.Conn, id string, err string) {
+	response := WebSocketResponse{
+		ID:    id,
+		Type:  "response",
+		Error: err,
+	}
+	if writeErr := conn.WriteJSON(response); writeErr != nil {
+		log.Printf("Failed to write response: %s", writeErr.Error())
 	}
 }

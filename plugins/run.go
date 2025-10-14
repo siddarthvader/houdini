@@ -66,7 +66,6 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 
 	wsHooks := pluginWebsocketHooks(ctx, plugin)
 	log.Printf("WSHooks: %v", wsHooks)
-	_, _ = json.Marshal(wsHooks) // We don't actually need the marshaled value, just checking for errors
 
 	// obtain a websocket upgrader
 	upgrader := websocket.Upgrader{
@@ -76,15 +75,9 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 	}
-	//register WebSocket handler (new)
+	//register WebSocket handler
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		// Handle HTTP POST requests for hook triggering
-		if r.Method == "POST" {
-			handleWebsocketHookHTTP(w, r)
-			return
-		}
-
-		// Handle WebSocket upgrades
+		// Upgrade to WebSocket
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Printf("WebSocket upgrade failed: %v", err)
