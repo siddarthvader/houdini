@@ -37,42 +37,91 @@ var (
 func pluginWebsocketHooks(ctx context.Context, plugin HoudiniPlugin[config.PluginConfig]) []string {
 	hooks := []string{}
 
+	// --- Config
+	hooks = append(hooks, "Config")
+	registerWSHandler("Config", handleConfig(plugin))
+
+	// --- AfterLoad is triggered for StaticRuntime OR AfterLoad
+	_, isStaticRuntime := plugin.(StaticRuntime)
+	_, isAfterLoad := plugin.(AfterLoad)
+	if isStaticRuntime || isAfterLoad {
+		hooks = append(hooks, "AfterLoad")
+		registerWSHandler("AfterLoad", handleAfterLoad(plugin))
+	}
+
+	// --- Environment
+	if _, ok := plugin.(Environment); ok {
+		hooks = append(hooks, "Environment")
+		registerWSHandlerWithPayload("Environment", handleEnvironment(plugin))
+	}
+
+	// --- ExtractDocuments
+	if _, ok := plugin.(ExtractDocuments); ok {
+		hooks = append(hooks, "ExtractDocuments")
+		registerWSHandlerWithPayload("ExtractDocuments", handleExtractDocuments(plugin))
+	}
+
+	// --- GenerateRuntime is triggered for IncludeRuntime OR GenerateRuntime
 	if _, ok := plugin.(GenerateRuntime); ok {
 		hooks = append(hooks, "GenerateRuntime")
 		registerWSHandler("GenerateRuntime", handleGenerateRuntime(plugin))
 	}
 
+	// --- GenerateDocuments
 	if _, ok := plugin.(GenerateDocuments); ok {
 		hooks = append(hooks, "GenerateDocuments")
 		registerWSHandler("GenerateDocuments", handleGenerateDocuments(plugin))
 	}
 
+	// --- Schema
 	if _, ok := plugin.(Schema); ok {
 		hooks = append(hooks, "Schema")
 		registerWSHandler("Schema", handleSchema(plugin))
 	}
 
+	// --- AfterExtract
 	if _, ok := plugin.(AfterExtract); ok {
 		hooks = append(hooks, "AfterExtract")
 		registerWSHandler("AfterExtract", handleAfterExtract(plugin))
 	}
 
+	// --- BeforeValidate
+	if _, ok := plugin.(BeforeValidate); ok {
+		hooks = append(hooks, "BeforeValidate")
+		registerWSHandler("BeforeValidate", handleBeforeValidate(plugin))
+	}
+
+	// --- Validate
+	if _, ok := plugin.(Validate); ok {
+		hooks = append(hooks, "Validate")
+		registerWSHandler("Validate", handleValidate(plugin))
+	}
+
+	// --- AfterValidate
+	if _, ok := plugin.(AfterValidate); ok {
+		hooks = append(hooks, "AfterValidate")
+		registerWSHandler("AfterValidate", handleAfterValidate(plugin))
+	}
+
+	// --- BeforeGenerate
+	if _, ok := plugin.(BeforeGenerate); ok {
+		hooks = append(hooks, "BeforeGenerate")
+		registerWSHandler("BeforeGenerate", handleBeforeGenerate(plugin))
+	}
+
+	// --- AfterGenerate
+	if _, ok := plugin.(AfterGenerate); ok {
+		hooks = append(hooks, "AfterGenerate")
+		registerWSHandler("AfterGenerate", handleAfterGenerate(plugin))
+	}
+
 	return hooks
 }
 
-// Register a WebSocket handler
 func registerWSHandler[T any](hookName string, handler func(ctx context.Context) (T, error)) {
 	wsMutex.Lock()
 	defer wsMutex.Unlock()
-	wsHandlers[hookName] = createWSHandler(hookName, handler)
-}
-
-// handler wrapper that handles common request/response logic
-func createWSHandler[T any](
-	hookName string,
-	handler func(ctx context.Context) (T, error),
-) func(*websocket.Conn, WebSocketMessage) {
-	return func(conn *websocket.Conn, msg WebSocketMessage) {
+	wsHandlers[hookName] = func(conn *websocket.Conn, msg WebSocketMessage) {
 		// validate request type
 		if msg.Type != "request" {
 			sendErrorResponse(conn, msg.ID, "Expected request type")
@@ -93,6 +142,49 @@ func createWSHandler[T any](
 
 		// execute
 		result, err := handler(ctx)
+		if err != nil {
+			sendErrorResponse(conn, msg.ID, err.Error())
+			return
+		}
+
+		// success response
+		response := WebSocketResponse{
+			ID:     msg.ID,
+			Type:   "response",
+			Result: result,
+		}
+		if writeErr := conn.WriteJSON(response); writeErr != nil {
+			log.Printf("Failed to write response: %s", writeErr.Error())
+		}
+	}
+}
+
+// ws handler with payload
+func registerWSHandlerWithPayload(hookName string, handler func(ctx context.Context, payload map[string]any) (any, error)) {
+	wsMutex.Lock()
+	defer wsMutex.Unlock()
+	wsHandlers[hookName] = func(conn *websocket.Conn, msg WebSocketMessage) {
+		// validate request type
+		if msg.Type != "request" {
+			sendErrorResponse(conn, msg.ID, "Expected request type")
+			return
+		}
+
+		if msg.TaskID == "" {
+			// just info
+			log.Printf(" taskId is empty for %s hook", hookName)
+		}
+
+		// context with wsconn and other values
+		ctx := ContextWithWSConn(context.Background(), conn)
+		ctx = ContextWithWSMessageID(ctx, msg.ID)
+		ctx = ContextWithTaskID(ctx, msg.TaskID)
+		ctx = ContextWithPluginDir(ctx, msg.PluginDirectory)
+
+		log.Printf("WSMessageID: %s", msg.ID)
+
+		// execute with payload
+		result, err := handler(ctx, msg.Payload)
 		if err != nil {
 			sendErrorResponse(conn, msg.ID, err.Error())
 			return
@@ -199,6 +291,151 @@ func handleAfterExtract[PluginConfig any](
 			return nil, afterExtract.AfterExtract(ctx)
 		}
 		return nil, fmt.Errorf("afterExtract hook not implemented")
+	}
+}
+
+func handleAfterLoad[PluginConfig any](
+	plugin HoudiniPlugin[PluginConfig],
+) func(ctx context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
+		// if the plugin defines a runtime to include
+		if staticRuntime, ok := plugin.(StaticRuntime); ok {
+			config, err := plugin.Database().ProjectConfig(ctx)
+			if err != nil {
+				return nil, err
+			}
+
+			runtimePath, err := staticRuntime.StaticRuntime(ctx)
+			if err != nil {
+				return nil, err
+			}
+
+			runtimeSource := path.Join(PluginDirFromContext(ctx), runtimePath)
+			targetPath := config.PluginStaticRuntimeDirectory(plugin.Name())
+
+			// the plugin could have defined a transform for the runtime
+			transform := func(ctx context.Context, source string, content string) (string, error) { return content, nil }
+			if transformer, ok := plugin.(TransformRuntime); ok {
+				transform = transformer.TransformRuntime
+			}
+
+			// copy the plugin runtime to the runtime directory
+			_, err = RecursiveCopy(ctx, runtimeSource, targetPath, transform)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		if p, ok := plugin.(AfterLoad); ok {
+			return nil, p.AfterLoad(ctx)
+		}
+
+		// nothing went wrong
+		return nil, nil
+	}
+}
+
+func handleBeforeValidate[PluginConfig any](
+	plugin HoudiniPlugin[PluginConfig],
+) func(ctx context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
+		if beforeValidate, ok := plugin.(BeforeValidate); ok {
+			return nil, beforeValidate.BeforeValidate(ctx)
+		}
+		return nil, fmt.Errorf("beforeValidate hook not implemented")
+	}
+}
+
+func handleValidate[PluginConfig any](
+	plugin HoudiniPlugin[PluginConfig],
+) func(ctx context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
+		if validate, ok := plugin.(Validate); ok {
+			return nil, validate.Validate(ctx)
+		}
+		return nil, fmt.Errorf("validate hook not implemented")
+	}
+}
+
+func handleAfterValidate[PluginConfig any](
+	plugin HoudiniPlugin[PluginConfig],
+) func(ctx context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
+		if afterValidate, ok := plugin.(AfterValidate); ok {
+			return nil, afterValidate.AfterValidate(ctx)
+		}
+		return nil, fmt.Errorf("afterValidate hook not implemented")
+	}
+}
+
+func handleBeforeGenerate[PluginConfig any](
+	plugin HoudiniPlugin[PluginConfig],
+) func(ctx context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
+		if beforeGenerate, ok := plugin.(BeforeGenerate); ok {
+			return nil, beforeGenerate.BeforeGenerate(ctx)
+		}
+		return nil, fmt.Errorf("beforeGenerate hook not implemented")
+	}
+}
+
+func handleAfterGenerate[PluginConfig any](
+	plugin HoudiniPlugin[PluginConfig],
+) func(ctx context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
+		if afterGenerate, ok := plugin.(AfterGenerate); ok {
+			return nil, afterGenerate.AfterGenerate(ctx)
+		}
+		return nil, fmt.Errorf("afterGenerate hook not implemented")
+	}
+}
+
+func handleConfig[PluginConfig any](
+	plugin HoudiniPlugin[PluginConfig],
+) func(ctx context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
+		// Config hook doesn't return anything, it just exists
+		return nil, nil
+	}
+}
+
+func handleEnvironment[PluginConfig any](
+	plugin HoudiniPlugin[PluginConfig],
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
+		if env, ok := plugin.(Environment); ok {
+			// the mode parameter comes as json in the request payload
+			mode, _ := payload["mode"].(string)
+
+			// invoke the environment logic
+			return env.Environment(ctx, mode)
+		}
+		return nil, fmt.Errorf("environment hook not implemented")
+	}
+}
+
+type ExtractDocumentsInput struct {
+	Filepaths []string `json:"filepaths"`
+}
+
+func handleExtractDocuments[PluginConfig any](
+	plugin HoudiniPlugin[PluginConfig],
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
+		if extract, ok := plugin.(ExtractDocuments); ok {
+			// Extract filepaths from payload - default to empty if not present
+			var filepaths []string
+			if filepathsRaw, ok := payload["filepaths"].([]interface{}); ok {
+				filepaths = make([]string, len(filepathsRaw))
+				for i, v := range filepathsRaw {
+					filepaths[i], _ = v.(string)
+				}
+			}
+
+			input := ExtractDocumentsInput{Filepaths: filepaths}
+			return nil, extract.ExtractDocuments(ctx, input)
+		}
+		return nil, fmt.Errorf("extractDocuments hook not implemented")
 	}
 }
 

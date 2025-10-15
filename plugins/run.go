@@ -58,14 +58,13 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 	db.ReloadPluginConfig(ctx)
 	db.ReloadProjectConfig(ctx)
 
-	hooks := pluginHooks(ctx, plugin)
+	// All hooks now use WebSocket
+	hooks := pluginWebsocketHooks(ctx, plugin)
+	log.Printf("WebSocket Hooks: %v", hooks)
 	hooksStr, err := json.Marshal(hooks)
 	if err != nil {
 		return fmt.Errorf("failed to marshal hooks: %w", err)
 	}
-
-	wsHooks := pluginWebsocketHooks(ctx, plugin)
-	log.Printf("WSHooks: %v", wsHooks)
 
 	// obtain a websocket upgrader
 	upgrader := websocket.Upgrader{
