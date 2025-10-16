@@ -58,9 +58,9 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 	db.ReloadPluginConfig(ctx)
 	db.ReloadProjectConfig(ctx)
 
-	// All hooks now use WebSocket
+	// ws hooks handler
 	hooks := pluginWebsocketHooks(ctx, plugin)
-	log.Printf("WebSocket Hooks: %v", hooks)
+
 	hooksStr, err := json.Marshal(hooks)
 	if err != nil {
 		return fmt.Errorf("failed to marshal hooks: %w", err)
@@ -74,21 +74,19 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 	}
-	//register WebSocket handler
+	// register WebSocket handler
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		// Upgrade to WebSocket
+		// upgrade to websocket
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Printf("WebSocket upgrade failed: %v", err)
+			log.Fatal(err)
 			return
 		}
 		defer conn.Close()
 
-		log.Printf("WebSocket connection established from %s", r.RemoteAddr)
-
+		// connection established
+		log.Printf("ws connection established from %s", r.RemoteAddr)
 		HandleWebSocketConnection(conn)
-
-		log.Printf("WebSocket connection closed from %s", r.RemoteAddr)
 	})
 
 	listener, err := net.Listen("tcp", ":0")
@@ -97,9 +95,6 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 	}
 
 	port := listener.Addr().(*net.TCPAddr).Port
-
-	// Log the WebSocket URL
-	log.Printf("WEBSOCKET_URL: ws://localhost:%d/ws\n", port)
 
 	// create server instance so we can shut it down gracefully
 	srv := &http.Server{}

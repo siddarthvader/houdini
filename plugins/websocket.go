@@ -128,17 +128,11 @@ func registerWSHandler[T any](hookName string, handler func(ctx context.Context)
 			return
 		}
 
-		if msg.TaskID == "" {
-			log.Printf(" taskId is empty for %s hook", hookName)
-		}
-
 		// context with all necessary values
 		ctx := ContextWithWSConn(context.Background(), conn)
 		ctx = ContextWithWSMessageID(ctx, msg.ID)
 		ctx = ContextWithTaskID(ctx, msg.TaskID)
 		ctx = ContextWithPluginDir(ctx, msg.PluginDirectory)
-
-		log.Printf("WSMessageID: %s", msg.ID)
 
 		// execute
 		result, err := handler(ctx)
@@ -170,18 +164,11 @@ func registerWSHandlerWithPayload(hookName string, handler func(ctx context.Cont
 			return
 		}
 
-		if msg.TaskID == "" {
-			// just info
-			log.Printf(" taskId is empty for %s hook", hookName)
-		}
-
 		// context with wsconn and other values
 		ctx := ContextWithWSConn(context.Background(), conn)
 		ctx = ContextWithWSMessageID(ctx, msg.ID)
 		ctx = ContextWithTaskID(ctx, msg.TaskID)
 		ctx = ContextWithPluginDir(ctx, msg.PluginDirectory)
-
-		log.Printf("WSMessageID: %s", msg.ID)
 
 		// execute with payload
 		result, err := handler(ctx, msg.Payload)
@@ -441,9 +428,6 @@ func handleExtractDocuments[PluginConfig any](
 
 // ws connection handler utils
 func HandleWebSocketConnection(conn *websocket.Conn) {
-	log.Printf("WebSocket connection established from %s", conn.RemoteAddr())
-	defer log.Printf("WebSocket connection closed from %s", conn.RemoteAddr())
-
 	// ping
 	conn.SetPingHandler(func(string) error {
 		// pong
@@ -456,11 +440,8 @@ func HandleWebSocketConnection(conn *websocket.Conn) {
 	for {
 		var msg WebSocketMessage
 		if err := conn.ReadJSON(&msg); err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.
+			if !websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.
 				CloseAbnormalClosure) {
-				log.Printf("WebSocket connection closed normally from %s: %v", conn.RemoteAddr(),
-					err)
-			} else {
 				log.Printf("WebSocket read error from %s: %v", conn.RemoteAddr(), err)
 			}
 			break
@@ -468,8 +449,6 @@ func HandleWebSocketConnection(conn *websocket.Conn) {
 
 		// can read Now, reset read deadling
 		conn.SetReadDeadline(time.Now().Add(time.Second * 60))
-
-		log.Printf("Received messaes from %s that is %s, %v", conn.RemoteAddr(), msg.Type, msg)
 
 		wsMutex.Lock()
 		handler, exists := wsHandlers[msg.Hook]
