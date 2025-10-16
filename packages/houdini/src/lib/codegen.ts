@@ -257,8 +257,24 @@ export async function codegen_setup(
 							ws.close()
 
 							if (response.error) {
+								// Detailed error logging
+								console.error(`\n${'='.repeat(80)}`)
+								console.error(`[ERROR] WebSocket Error Details:`)
+								console.error(`${'='.repeat(80)}`)
+								console.error(`Plugin:       ${name}`)
+								console.error(`Hook:         ${hook}`)
+								console.error(`Message ID:   ${messageId}`)
+								console.error(`WS URL:       ${wsUrl}`)
+								console.error(`Task ID:      ${task_id || 'none'}`)
+								console.error(`Payload:      ${JSON.stringify(payload, null, 2)}`)
+								console.error(`Error:        ${response.error}`)
+								console.error(`\nFull Response:`)
+								console.error(JSON.stringify(response, null, 2))
+								console.error(`${'='.repeat(80)}\n`)
+
 								reject(new Error(`${name}/${hook}: ${response.error}`))
 							} else {
+								console.log(`[SUCCESS] ${name}/${hook} completed`)
 								resolve(response.result)
 							}
 							break
