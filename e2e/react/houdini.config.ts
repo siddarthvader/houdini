@@ -4,6 +4,7 @@ import type { ConfigFile } from 'houdini'
 
 const config: ConfigFile = {
 	include: ['src/{components,routes}/**/*.{ts,tsx,gql}'],
+  schemaPath:'./schema.graphql',
 	defaultPartial: true,
 	scalars: {
 		DateTime: {
