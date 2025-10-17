@@ -59,7 +59,7 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 	db.ReloadProjectConfig(ctx)
 
 	// ws hooks handler
-	hooks := pluginWebsocketHooks(ctx, plugin)
+	hooks := pluginWebsocketHooks(plugin)
 
 	hooksStr, err := json.Marshal(hooks)
 	if err != nil {
