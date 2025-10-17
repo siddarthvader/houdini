@@ -6,7 +6,6 @@ import (
 	"log"
 	"path"
 	"sync"
-	"time"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
 	"github.com/gorilla/websocket"
@@ -437,7 +436,6 @@ func HandleWebSocketConnection(conn *websocket.Conn) {
 		return conn.WriteMessage(websocket.PongMessage, []byte{})
 	})
 
-	conn.SetReadDeadline(time.Now().Add(time.Second * 60))
 
 	// message loop
 	for {
@@ -450,8 +448,6 @@ func HandleWebSocketConnection(conn *websocket.Conn) {
 			break
 		}
 
-		// can read Now, reset read deadling
-		conn.SetReadDeadline(time.Now().Add(time.Second * 60))
 
 		wsMutex.Lock()
 		handler, exists := wsHandlers[msg.Hook]
