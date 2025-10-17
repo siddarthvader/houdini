@@ -8,7 +8,6 @@ import type { ProjectManifest } from '../runtime'
 import { db_path, houdini_root } from './conventions.js'
 import type * as routerConventions from './conventions.js'
 import { create_schema, write_config } from './database.js'
-import { format_hook_error, type HookError } from './error.js'
 import * as fs from './fs.js'
 import type { Config } from './project.js'
 
@@ -212,15 +211,103 @@ export async function codegen_setup(
 		const { port, directory } = plugin_specs[name]
 
 		// All hooks now use WebSocket
-		const wsUrl = `ws://localhost:${port}/ws`
 		return await invoke_hook_websocket(
 			name,
 			hook,
 			payload,
 			task_id,
-			wsUrl,
+			port,
 			directory,
 		)
+	}
+
+	const wsConnections = new Map<string, WebSocket>()
+	const pendingRequests = new Map<
+		string,
+		{
+			resolve: (value: any) => void
+			reject: (reason: any) => void
+			timeout: NodeJS.Timeout
+		}
+	>()
+
+	async function getOrCreateWS(name: string, port: number): Promise<WebSocket> {
+		const existing = wsConnections.get(name)
+		if (existing && existing.readyState === WebSocket.OPEN) {
+			return existing
+		}
+
+		return new Promise((resolve, reject) => {
+			// get a new connection
+			const wsUrl = `ws://localhost:${port}/ws`
+			const ws = new WebSocket(wsUrl)
+
+			ws.on('open', () => {
+				// clear any pending requests
+				wsConnections.set(name, ws)
+				return resolve(ws)
+			})
+
+			// Set up message handler for this connection
+			ws.on('message', (data: Buffer) => {
+				try {
+					const response = JSON.parse(data.toString())
+					const pending = pendingRequests.get(response.id)
+					if (!pending) return
+
+					clearTimeout(pending.timeout)
+					pendingRequests.delete(response.id)
+
+					switch (response.type) {
+						case 'error':
+							// Non-fatal error - log and continue listening
+							console.error(`!   [${name}] ${response.error}`)
+							pending.reject(new Error(`${name}: ${response.error}`))
+							break
+
+						case 'response':
+							if (response.error) {
+								// Detailed error logging
+								console.log(`\n${'='.repeat(80)}`)
+								console.log(`[ERROR] WebSocket Error Details:`)
+								console.log(`${'='.repeat(80)}`)
+								console.log(`Plugin:       ${name}`)
+								console.log(`Message ID:   ${response.id}`)
+								console.log(`Error:        ${response.error}`)
+								console.log(`\nFull Response:`)
+								console.log(JSON.stringify(response, null, 2))
+								console.log(`${'='.repeat(80)}\n`)
+								pending.reject(new Error(`${name}: ${response.error}`))
+							} else {
+								pending.resolve(response.result)
+							}
+							break
+
+						default:
+							console.warn(`[${name}] Unknown message type: ${response.type}`)
+							pending.reject(
+								new Error(`Unknown message type: ${response.type}`),
+							)
+					}
+				} catch (err) {
+					// if parsing the message fails, then we are not sure which pending request it belongs to
+					// just log and move on
+					console.error(`Error processing WebSocket message for ${name}:`, err)
+				}
+			})
+
+			ws.on('error', (err) => {
+				console.error(`WebSocket error for ${name}:`, err)
+				wsConnections.delete(name)
+				reject(new Error(`WebSocket error for ${name}: ${err}`))
+			})
+
+			ws.on('close', () => {
+				// Remove from pool so next request creates new connection
+				// requestsd will eventually timeout and be rejected, we can agressively remove them but it's not a big deal
+				wsConnections.delete(name)
+			})
+		})
 	}
 
 	const invoke_hook_websocket = async (
@@ -228,81 +315,28 @@ export async function codegen_setup(
 		hook: string,
 		payload: Record<string, any> = {},
 		task_id: string | undefined,
-		wsUrl: string,
+		port: number,
 		directory: string,
 	): Promise<any> => {
+		const ws = await getOrCreateWS(name, port)
+
 		return new Promise((resolve, reject) => {
-			const ws = new WebSocket(wsUrl)
-			const messageId =` ${hook}-${Date.now()}-${randomUUID()}`
+			const messageId = `${hook}-${Date.now()}-${randomUUID()}`
 
 			const timeout = setTimeout(() => {
-				ws.close()
-				reject(new Error(`WebSocket request timeout for ${name}/${hook}`))
-			}, 30000)
+        reject(new Error(`WebSocket request timeout for ${name}/${hook}`))
+      }, 30000)
+			pendingRequests.set(messageId, { resolve, reject, timeout })
 
-			ws.on('open', () => {
-				const message = {
-					id: messageId,
-					type: 'request',
-					hook: hook,
-					payload: payload,
-					taskId: task_id,
-					pluginDirectory: directory,
-				}
-				ws.send(JSON.stringify(message))
-			})
-
-			ws.on('message', (data: Buffer) => {
-				try {
-					const response = JSON.parse(data.toString())
-					if (response.id !== messageId) return
-
-					switch (response.type) {
-						case 'error':
-							// Non-fatal error - log and continue listening
-							console.error(`!   [${name}] ${response.error}`)
-							break
-
-						case 'response':
-							// Final response - close and resolve
-							clearTimeout(timeout)
-							ws.close()
-
-							if (response.error) {
-								// Detailed error logging
-								console.log(`\n${'='.repeat(80)}`)
-								console.log(`[ERROR] WebSocket Error Details:`)
-								console.log(`${'='.repeat(80)}`)
-								console.log(`Plugin:       ${name}`)
-								console.log(`Hook:         ${hook}`)
-								console.log(`Message ID:   ${messageId}`)
-								console.log(`WS URL:       ${wsUrl}`)
-								console.log(`Task ID:      ${task_id || 'none'}`)
-								console.log(`Payload:      ${JSON.stringify(payload, null, 2)}`)
-								console.log(`Error:        ${response.error}`)
-								console.log(`\nFull Response:`)
-								console.log(JSON.stringify(response, null, 2))
-								console.log(`${'='.repeat(80)}\n`)
-								reject(new Error(`${name}/${hook}: ${response.error}`))
-							} else {
-								resolve(response.result)
-							}
-							break
-
-						default:
-							console.warn(`[${name}] Unknown message type: ${response.type}`)
-					}
-				} catch (err) {
-					clearTimeout(timeout)
-					ws.close()
-					reject(err)
-				}
-			})
-
-			ws.on('error', (err) => {
-				clearTimeout(timeout)
-				reject(new Error(`WebSocket error for ${name}/${hook}: ${err.message}`))
-			})
+			const message = {
+				id: messageId,
+				type: 'request',
+				hook: hook,
+				payload: payload,
+				taskId: task_id,
+				pluginDirectory: directory,
+			}
+			ws.send(JSON.stringify(message))
 		})
 	}
 
