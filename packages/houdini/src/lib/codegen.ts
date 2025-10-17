@@ -324,8 +324,9 @@ export async function codegen_setup(
 			const messageId = `${hook}-${Date.now()}-${randomUUID()}`
 
 			const timeout = setTimeout(() => {
-        reject(new Error(`WebSocket request timeout for ${name}/${hook}`))
-      }, 30000)
+				pendingRequests.delete(messageId)
+				reject(new Error(`WebSocket request timeout for ${name}/${hook}`))
+			}, 30000)
 			pendingRequests.set(messageId, { resolve, reject, timeout })
 
 			const message = {
