@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import sqlite, { type DatabaseSync } from 'node:sqlite'
 import { WebSocket } from 'ws'
@@ -212,9 +213,15 @@ export async function codegen_setup(
 
 		// All hooks now use WebSocket
 		const wsUrl = `ws://localhost:${port}/ws`
-		return await invoke_hook_websocket(name, hook, payload, task_id, wsUrl, directory)
+		return await invoke_hook_websocket(
+			name,
+			hook,
+			payload,
+			task_id,
+			wsUrl,
+			directory,
+		)
 	}
-
 
 	const invoke_hook_websocket = async (
 		name: string,
@@ -226,7 +233,7 @@ export async function codegen_setup(
 	): Promise<any> => {
 		return new Promise((resolve, reject) => {
 			const ws = new WebSocket(wsUrl)
-			const messageId = `${hook}-${Date.now()}-${Math.random()}`
+			const messageId =` ${hook}-${Date.now()}-${randomUUID()}`
 
 			const timeout = setTimeout(() => {
 				ws.close()
@@ -262,6 +269,20 @@ export async function codegen_setup(
 							ws.close()
 
 							if (response.error) {
+								// Detailed error logging
+								console.log(`\n${'='.repeat(80)}`)
+								console.log(`[ERROR] WebSocket Error Details:`)
+								console.log(`${'='.repeat(80)}`)
+								console.log(`Plugin:       ${name}`)
+								console.log(`Hook:         ${hook}`)
+								console.log(`Message ID:   ${messageId}`)
+								console.log(`WS URL:       ${wsUrl}`)
+								console.log(`Task ID:      ${task_id || 'none'}`)
+								console.log(`Payload:      ${JSON.stringify(payload, null, 2)}`)
+								console.log(`Error:        ${response.error}`)
+								console.log(`\nFull Response:`)
+								console.log(JSON.stringify(response, null, 2))
+								console.log(`${'='.repeat(80)}\n`)
 								reject(new Error(`${name}/${hook}: ${response.error}`))
 							} else {
 								resolve(response.result)
