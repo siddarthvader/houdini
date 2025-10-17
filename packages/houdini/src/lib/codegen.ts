@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import path from 'node:path'
 import sqlite, { type DatabaseSync } from 'node:sqlite'
+import { WebSocket } from 'ws'
 
 import type { ProjectManifest } from '../runtime'
 import { db_path, houdini_root } from './conventions.js'
@@ -209,41 +210,79 @@ export async function codegen_setup(
 	) => {
 		const { port, directory } = plugin_specs[name]
 
-		// make the request
-		const response = await fetch(
-			`http://localhost:${port}/${hook.toLowerCase()}`,
-			{
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					'X-Task-ID': task_id?.toString() ?? '',
-					'X-Plugin-Directory': directory,
-				},
-				body: JSON.stringify(payload),
-			},
-		)
+		// All hooks now use WebSocket
+		const wsUrl = `ws://localhost:${port}/ws`
+		return await invoke_hook_websocket(name, hook, payload, task_id, wsUrl, directory)
+	}
 
-		// if the request failed, throw an error
-		if (!response.ok) {
-			if (response.status === 404) {
-				throw new Error(`Plugin ${name} does not support hook ${hook}`)
-			}
-			const responseJSON = await response.json()
-			const errors: HookError[] = Array.isArray(responseJSON)
-				? responseJSON
-				: [responseJSON]
-			errors.forEach((error) => {
-				format_hook_error(config.root_dir, error, name)
+
+	const invoke_hook_websocket = async (
+		name: string,
+		hook: string,
+		payload: Record<string, any> = {},
+		task_id: string | undefined,
+		wsUrl: string,
+		directory: string,
+	): Promise<any> => {
+		return new Promise((resolve, reject) => {
+			const ws = new WebSocket(wsUrl)
+			const messageId = `${hook}-${Date.now()}-${Math.random()}`
+
+			const timeout = setTimeout(() => {
+				ws.close()
+				reject(new Error(`WebSocket request timeout for ${name}/${hook}`))
+			}, 30000)
+
+			ws.on('open', () => {
+				const message = {
+					id: messageId,
+					type: 'request',
+					hook: hook,
+					payload: payload,
+					taskId: task_id,
+					pluginDirectory: directory,
+				}
+				ws.send(JSON.stringify(message))
 			})
-			// errors
-			throw new Error(`Failed to call ${name}/${hook.toLowerCase()}`)
-		}
-		// look at the response headers, and if the content type is application/json, parse the body
-		const contentType = response.headers.get('content-type')
-		if (contentType && contentType.includes('application/json')) {
-			return await response.json()
-		}
-		return await response.text()
+
+			ws.on('message', (data: Buffer) => {
+				try {
+					const response = JSON.parse(data.toString())
+					if (response.id !== messageId) return
+
+					switch (response.type) {
+						case 'error':
+							// Non-fatal error - log and continue listening
+							console.error(`!   [${name}] ${response.error}`)
+							break
+
+						case 'response':
+							// Final response - close and resolve
+							clearTimeout(timeout)
+							ws.close()
+
+							if (response.error) {
+								reject(new Error(`${name}/${hook}: ${response.error}`))
+							} else {
+								resolve(response.result)
+							}
+							break
+
+						default:
+							console.warn(`[${name}] Unknown message type: ${response.type}`)
+					}
+				} catch (err) {
+					clearTimeout(timeout)
+					ws.close()
+					reject(err)
+				}
+			})
+
+			ws.on('error', (err) => {
+				clearTimeout(timeout)
+				reject(new Error(`WebSocket error for ${name}/${hook}: ${err.message}`))
+			})
+		})
 	}
 
 	const trigger_hook = async (

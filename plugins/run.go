@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"zombiezen.com/go/sqlite/sqlitex"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
@@ -57,11 +58,36 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 	db.ReloadPluginConfig(ctx)
 	db.ReloadProjectConfig(ctx)
 
-	hooks := pluginHooks(ctx, plugin)
+	// ws hooks handler
+	hooks := pluginWebsocketHooks(plugin)
+
 	hooksStr, err := json.Marshal(hooks)
 	if err != nil {
 		return fmt.Errorf("failed to marshal hooks: %w", err)
 	}
+
+	// obtain a websocket upgrader
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+	// register WebSocket handler
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		// upgrade to websocket
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+		defer conn.Close()
+
+		// connection established
+		log.Printf("ws connection established from %s", r.RemoteAddr)
+		HandleWebSocketConnection(conn)
+	})
 
 	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
@@ -155,7 +181,7 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 				`
 					INSERT INTO plugins (
 						name, hooks, port, plugin_order, include_runtime, config_module, client_plugins
-					) VALUES 
+					) VALUES
 						(?, ?, ?, ?, ?, ?, ?)
 				`,
 				&sqlitex.ExecOptions{
