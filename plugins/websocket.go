@@ -34,7 +34,7 @@ var (
 	wsMutex    = sync.Mutex{}
 )
 
-func pluginWebsocketHooks(ctx context.Context, plugin HoudiniPlugin[config.PluginConfig]) []string {
+func pluginWebsocketHooks(plugin HoudiniPlugin[config.PluginConfig]) []string {
 	hooks := []string{}
 
 	// --- Config
@@ -49,34 +49,16 @@ func pluginWebsocketHooks(ctx context.Context, plugin HoudiniPlugin[config.Plugi
 		registerWSHandler("AfterLoad", handleAfterLoad(plugin))
 	}
 
-	// --- Environment
-	if _, ok := plugin.(Environment); ok {
-		hooks = append(hooks, "Environment")
-		registerWSHandlerWithPayload("Environment", handleEnvironment(plugin))
+	// --- Schema
+	if _, ok := plugin.(Schema); ok {
+		hooks = append(hooks, "Schema")
+		registerWSHandler("Schema", handleSchema(plugin))
 	}
 
 	// --- ExtractDocuments
 	if _, ok := plugin.(ExtractDocuments); ok {
 		hooks = append(hooks, "ExtractDocuments")
 		registerWSHandlerWithPayload("ExtractDocuments", handleExtractDocuments(plugin))
-	}
-
-	// --- GenerateRuntime is triggered for IncludeRuntime OR GenerateRuntime
-	if _, ok := plugin.(GenerateRuntime); ok {
-		hooks = append(hooks, "GenerateRuntime")
-		registerWSHandler("GenerateRuntime", handleGenerateRuntime(plugin))
-	}
-
-	// --- GenerateDocuments
-	if _, ok := plugin.(GenerateDocuments); ok {
-		hooks = append(hooks, "GenerateDocuments")
-		registerWSHandler("GenerateDocuments", handleGenerateDocuments(plugin))
-	}
-
-	// --- Schema
-	if _, ok := plugin.(Schema); ok {
-		hooks = append(hooks, "Schema")
-		registerWSHandler("Schema", handleSchema(plugin))
 	}
 
 	// --- AfterExtract
@@ -109,10 +91,31 @@ func pluginWebsocketHooks(ctx context.Context, plugin HoudiniPlugin[config.Plugi
 		registerWSHandler("BeforeGenerate", handleBeforeGenerate(plugin))
 	}
 
+	// --- GenerateDocuments
+	if _, ok := plugin.(GenerateDocuments); ok {
+		hooks = append(hooks, "GenerateDocuments")
+		registerWSHandler("GenerateDocuments", handleGenerateDocuments(plugin))
+	}
+
+	// --- GenerateRuntime is triggered for IncludeRuntime OR GenerateRuntime OR Config
+	_, isIncludeRuntime := plugin.(IncludeRuntime)
+	_, isGenerateRuntime := plugin.(GenerateRuntime)
+	_, isConfig := plugin.(Config)
+	if isIncludeRuntime || isGenerateRuntime || isConfig {
+		hooks = append(hooks, "GenerateRuntime")
+		registerWSHandler("GenerateRuntime", handleGenerateRuntime(plugin))
+	}
+
 	// --- AfterGenerate
 	if _, ok := plugin.(AfterGenerate); ok {
 		hooks = append(hooks, "AfterGenerate")
 		registerWSHandler("AfterGenerate", handleAfterGenerate(plugin))
+	}
+
+	// --- Environment (not in pipeline order - standalone hook with payload)
+	if _, ok := plugin.(Environment); ok {
+		hooks = append(hooks, "Environment")
+		registerWSHandlerWithPayload("Environment", handleEnvironment(plugin))
 	}
 
 	return hooks
