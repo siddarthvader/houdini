@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"path"
 	"sync"
 
@@ -445,7 +446,9 @@ func HandleWebSocketConnection(conn *websocket.Conn) {
 				CloseAbnormalClosure) {
 				log.Printf("WebSocket read error from %s: %v", conn.RemoteAddr(), err)
 			}
-			break
+			//  connection closed - orchestrator is gone, exit the plugin process
+			log.Printf("WebSocket connection closed, exiting plugin process")
+			os.Exit(0)
 		}
 
 
