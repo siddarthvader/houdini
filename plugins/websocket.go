@@ -58,7 +58,7 @@ func pluginWebsocketHooks(plugin HoudiniPlugin[config.PluginConfig]) []string {
 	// --- ExtractDocuments
 	if _, ok := plugin.(ExtractDocuments); ok {
 		hooks = append(hooks, "ExtractDocuments")
-		registerWSHandlerWithPayload("ExtractDocuments", handleExtractDocuments(plugin))
+		registerWSHandler("ExtractDocuments", handleExtractDocuments(plugin))
 	}
 
 	// --- AfterExtract
@@ -115,13 +115,13 @@ func pluginWebsocketHooks(plugin HoudiniPlugin[config.PluginConfig]) []string {
 	// --- Environment (not in pipeline order - standalone hook with payload)
 	if _, ok := plugin.(Environment); ok {
 		hooks = append(hooks, "Environment")
-		registerWSHandlerWithPayload("Environment", handleEnvironment(plugin))
+		registerWSHandler("Environment", handleEnvironment(plugin))
 	}
 
 	return hooks
 }
 
-func registerWSHandler[T any](hookName string, handler func(ctx context.Context) (T, error)) {
+func registerWSHandler(hookName string, handler func(ctx context.Context, payload map[string]any) (any, error)) {
 	wsMutex.Lock()
 	defer wsMutex.Unlock()
 	wsHandlers[hookName] = func(conn *websocket.Conn, msg WebSocketMessage) {
@@ -132,42 +132,6 @@ func registerWSHandler[T any](hookName string, handler func(ctx context.Context)
 		}
 
 		// context with all necessary values
-		ctx := ContextWithWSConn(context.Background(), conn)
-		ctx = ContextWithWSMessageID(ctx, msg.ID)
-		ctx = ContextWithTaskID(ctx, msg.TaskID)
-		ctx = ContextWithPluginDir(ctx, msg.PluginDirectory)
-
-		// execute
-		result, err := handler(ctx)
-		if err != nil {
-			sendErrorResponse(conn, msg.ID, err.Error())
-			return
-		}
-
-		// success response
-		response := WebSocketResponse{
-			ID:     msg.ID,
-			Type:   "response",
-			Result: result,
-		}
-		if writeErr := conn.WriteJSON(response); writeErr != nil {
-			log.Printf("Failed to write response: %s", writeErr.Error())
-		}
-	}
-}
-
-// ws handler with payload
-func registerWSHandlerWithPayload(hookName string, handler func(ctx context.Context, payload map[string]any) (any, error)) {
-	wsMutex.Lock()
-	defer wsMutex.Unlock()
-	wsHandlers[hookName] = func(conn *websocket.Conn, msg WebSocketMessage) {
-		// validate request type
-		if msg.Type != "request" {
-			sendErrorResponse(conn, msg.ID, "Expected request type")
-			return
-		}
-
-		// context with wsconn and other values
 		ctx := ContextWithWSConn(context.Background(), conn)
 		ctx = ContextWithWSMessageID(ctx, msg.ID)
 		ctx = ContextWithTaskID(ctx, msg.TaskID)
@@ -195,8 +159,8 @@ func registerWSHandlerWithPayload(hookName string, handler func(ctx context.Cont
 // generator plugin functions
 func handleGenerateRuntime[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) ([]string, error) {
-	return func(ctx context.Context) ([]string, error) {
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
 		// if conn := WSConnFromContext(ctx); conn != nil {
 		// 	conn.WriteJSON(WebSocketResponse{
 		// 		ID:    ctx.Value("wsMessageID").(string),
@@ -253,8 +217,8 @@ func handleGenerateRuntime[PluginConfig any](
 
 func handleGenerateDocuments[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) (any, error) {
-	return func(ctx context.Context) (any, error) {
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
 		if generate, ok := plugin.(GenerateDocuments); ok {
 			return generate.GenerateDocuments(ctx)
 		}
@@ -264,8 +228,8 @@ func handleGenerateDocuments[PluginConfig any](
 
 func handleSchema[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) (any, error) {
-	return func(ctx context.Context) (any, error) {
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
 		if schema, ok := plugin.(Schema); ok {
 			return nil, schema.Schema(ctx)
 		}
@@ -275,8 +239,8 @@ func handleSchema[PluginConfig any](
 
 func handleAfterExtract[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) (any, error) {
-	return func(ctx context.Context) (any, error) {
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
 		if afterExtract, ok := plugin.(AfterExtract); ok {
 			return nil, afterExtract.AfterExtract(ctx)
 		}
@@ -286,8 +250,8 @@ func handleAfterExtract[PluginConfig any](
 
 func handleAfterLoad[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) (any, error) {
-	return func(ctx context.Context) (any, error) {
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
 		// if the plugin defines a runtime to include
 		if staticRuntime, ok := plugin.(StaticRuntime); ok {
 			config, err := plugin.Database().ProjectConfig(ctx)
@@ -327,8 +291,8 @@ func handleAfterLoad[PluginConfig any](
 
 func handleBeforeValidate[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) (any, error) {
-	return func(ctx context.Context) (any, error) {
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
 		if beforeValidate, ok := plugin.(BeforeValidate); ok {
 			return nil, beforeValidate.BeforeValidate(ctx)
 		}
@@ -338,8 +302,8 @@ func handleBeforeValidate[PluginConfig any](
 
 func handleValidate[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) (any, error) {
-	return func(ctx context.Context) (any, error) {
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
 		if validate, ok := plugin.(Validate); ok {
 			return nil, validate.Validate(ctx)
 		}
@@ -349,8 +313,8 @@ func handleValidate[PluginConfig any](
 
 func handleAfterValidate[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) (any, error) {
-	return func(ctx context.Context) (any, error) {
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
 		if afterValidate, ok := plugin.(AfterValidate); ok {
 			return nil, afterValidate.AfterValidate(ctx)
 		}
@@ -360,8 +324,8 @@ func handleAfterValidate[PluginConfig any](
 
 func handleBeforeGenerate[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) (any, error) {
-	return func(ctx context.Context) (any, error) {
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
 		if beforeGenerate, ok := plugin.(BeforeGenerate); ok {
 			return nil, beforeGenerate.BeforeGenerate(ctx)
 		}
@@ -371,8 +335,8 @@ func handleBeforeGenerate[PluginConfig any](
 
 func handleAfterGenerate[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) (any, error) {
-	return func(ctx context.Context) (any, error) {
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
 		if afterGenerate, ok := plugin.(AfterGenerate); ok {
 			return nil, afterGenerate.AfterGenerate(ctx)
 		}
@@ -382,8 +346,8 @@ func handleAfterGenerate[PluginConfig any](
 
 func handleConfig[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
-) func(ctx context.Context) (any, error) {
-	return func(ctx context.Context) (any, error) {
+) func(ctx context.Context, payload map[string]any) (any, error) {
+	return func(ctx context.Context, payload map[string]any) (any, error) {
 		// Config hook doesn't return anything, it just exists
 		return nil, nil
 	}
