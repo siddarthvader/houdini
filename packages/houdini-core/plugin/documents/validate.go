@@ -886,7 +886,7 @@ func ValidateDuplicateArgumentInField(
 	err := db.StepQuery(ctx, query, nil, func(row *sqlite.Stmt) {
 		selectionID := row.ColumnText(0)
 		argName := row.ColumnText(1)
-		filepath := row.ColumnText(2)
+		filepath := row.ColumnText(3)
 		rowNum := row.ColumnInt(4)
 		colNum := row.ColumnInt(5)
 
