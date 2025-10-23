@@ -8,6 +8,8 @@ import type { ProjectManifest } from '../runtime'
 import { db_path, houdini_root } from './conventions.js'
 import type * as routerConventions from './conventions.js'
 import { create_schema, write_config } from './database.js'
+import type { HookError } from './error.js'
+import { format_hook_error } from './error.js'
 import * as fs from './fs.js'
 import type { Config } from './project.js'
 
@@ -255,19 +257,16 @@ export async function codegen_setup(
 
 						case 'response':
 							if (response.error) {
-								// Print error as-is (can be array, object, or string)
-								console.log(`\n${'='.repeat(80)}`)
-								console.log(`[ERROR] Plugin: ${name}`)
-								console.log(`${'='.repeat(80)}`)
-								console.log(JSON.stringify(response.error, null, 2))
-								console.log(`${'='.repeat(80)}\n`)
-
-								// Create error message for rejection
-								const errorMessage = typeof response.error === 'string'
+								// Handle errors like the old HTTP implementation
+								const errors: HookError[] = Array.isArray(response.error)
 									? response.error
-									: JSON.stringify(response.error)
+									: [response.error]
 
-								pending.reject(new Error(`${name}: ${errorMessage}`))
+								errors.forEach((error) => {
+									format_hook_error(config.root_dir, error, name)
+								})
+
+								pending.reject(new Error(`Failed to call ${name}`))
 							} else {
 								pending.resolve(response.result)
 							}
