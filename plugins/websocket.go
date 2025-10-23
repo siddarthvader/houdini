@@ -25,7 +25,7 @@ type WebSocketResponse struct {
 	ID     string `json:"id"`
 	Type   string `json:"type"`
 	Result any    `json:"result,omitempty"`
-	Error  string `json:"error,omitempty"`
+	Error  any    `json:"error,omitempty"`
 }
 
 // routing map for websocket handlers
@@ -127,7 +127,7 @@ func registerWSHandler(hookName string, handler func(ctx context.Context, payloa
 	wsHandlers[hookName] = func(conn *websocket.Conn, msg WebSocketMessage) {
 		// validate request type
 		if msg.Type != "request" {
-			sendErrorResponse(conn, msg.ID, "Expected request type")
+			sendErrorResponse(conn, msg.ID, fmt.Errorf("Expected request type"))
 			return
 		}
 
@@ -140,7 +140,7 @@ func registerWSHandler(hookName string, handler func(ctx context.Context, payloa
 		// execute with payload
 		result, err := handler(ctx, msg.Payload)
 		if err != nil {
-			sendErrorResponse(conn, msg.ID, err.Error())
+			sendErrorResponse(conn, msg.ID, err)
 			return
 		}
 
@@ -393,14 +393,7 @@ func handleExtractDocuments[PluginConfig any](
 	}
 }
 
-// ws connection handler utils
 func HandleWebSocketConnection(conn *websocket.Conn) {
-	// ping
-	conn.SetPingHandler(func(string) error {
-		// pong
-		return conn.WriteMessage(websocket.PongMessage, []byte{})
-	})
-
 
 	// message loop
 	for {
@@ -415,7 +408,6 @@ func HandleWebSocketConnection(conn *websocket.Conn) {
 			os.Exit(0)
 		}
 
-
 		wsMutex.Lock()
 		handler, exists := wsHandlers[msg.Hook]
 		wsMutex.Unlock()
@@ -425,7 +417,7 @@ func HandleWebSocketConnection(conn *websocket.Conn) {
 				defer func() {
 					if r := recover(); r != nil {
 						log.Printf("Handler panic for hook %s: %v", msg.Hook, r)
-						sendErrorResponse(conn, msg.ID, fmt.Sprintf("Handler panic: %v", r))
+						sendErrorResponse(conn, msg.ID, fmt.Errorf("handler panic: %v", r))
 					}
 				}()
 
@@ -433,18 +425,47 @@ func HandleWebSocketConnection(conn *websocket.Conn) {
 			}()
 		} else {
 			log.Printf("No handler for hook %s", msg.Hook)
-			sendErrorResponse(conn, msg.ID, fmt.Sprintf("No handler for hook %s", msg.Hook))
+			sendErrorResponse(conn, msg.ID, fmt.Errorf("no handler for hook %s", msg.Hook))
 		}
 	}
 }
 
-func sendErrorResponse(conn *websocket.Conn, id string, err string) {
+func sendErrorResponse(conn *websocket.Conn, id string, err error) {
+	// if the error is a list of plugin errors then we should serialize the full list
+	if pluginErr, ok := err.(*ErrorList); ok {
+		response := WebSocketResponse{
+			ID:    id,
+			Type:  "response",
+			Error: pluginErr.GetItems(),
+		}
+		if writeErr := conn.WriteJSON(response); writeErr != nil {
+			log.Printf("Failed to write response: %s", writeErr.Error())
+		}
+		return
+	}
+
+	// error could be just a single error
+	if pluginErr, ok := err.(*Error); ok {
+		response := WebSocketResponse{
+			ID:    id,
+			Type:  "response",
+			Error: pluginErr,
+		}
+		if writeErr := conn.WriteJSON(response); writeErr != nil {
+			log.Printf("Failed to write response: %s", writeErr.Error())
+		}
+		return
+	}
+
+	// otherwise w should just serialize the error message
 	response := WebSocketResponse{
-		ID:    id,
-		Type:  "response",
-		Error: err,
+		ID:   id,
+		Type: "response",
+		Error: map[string]string{
+			"message": err.Error(),
+		},
 	}
 	if writeErr := conn.WriteJSON(response); writeErr != nil {
-		log.Printf("Failed to write response: %s", writeErr.Error())
+		log.Printf("Failed to write response : %s", writeErr.Error())
 	}
 }
