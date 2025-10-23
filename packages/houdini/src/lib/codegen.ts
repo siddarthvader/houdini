@@ -255,17 +255,19 @@ export async function codegen_setup(
 
 						case 'response':
 							if (response.error) {
-								// Detailed error logging
+								// Print error as-is (can be array, object, or string)
 								console.log(`\n${'='.repeat(80)}`)
-								console.log(`[ERROR] WebSocket Error Details:`)
+								console.log(`[ERROR] Plugin: ${name}`)
 								console.log(`${'='.repeat(80)}`)
-								console.log(`Plugin:       ${name}`)
-								console.log(`Message ID:   ${response.id}`)
-								console.log(`Error:        ${response.error}`)
-								console.log(`\nFull Response:`)
-								console.log(JSON.stringify(response, null, 2))
+								console.log(JSON.stringify(response.error, null, 2))
 								console.log(`${'='.repeat(80)}\n`)
-								pending.reject(new Error(`${name}: ${response.error}`))
+
+								// Create error message for rejection
+								const errorMessage = typeof response.error === 'string'
+									? response.error
+									: JSON.stringify(response.error)
+
+								pending.reject(new Error(`${name}: ${errorMessage}`))
 							} else {
 								pending.resolve(response.result)
 							}
