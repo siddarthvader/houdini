@@ -1,0 +1,34 @@
+{
+  "name": "houdini-language-server",
+  "version": "0.1.0",
+  "description": "Language Server for Houdini GraphQL directives",
+  "main": "./dist/server.js",
+  "bin": {
+    "houdini-language-server": "./dist/server.js"
+  },
+  "scripts": {
+    "build": "tsup src/server.ts --format cjs --clean && npm run add-shebang",
+    "add-shebang": "grep -q '^#!/usr/bin/env node' dist/server.js || sed -i '' '1s/^/\\#\\!\\/usr\\/bin\\/env node\\n/' dist/server.js && chmod +x dist/server.js",
+    "dev": "tsup src/server.ts --format cjs --watch --onSuccess 'npm run add-shebang'",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.11",
+    "graphql": "^16.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "keywords": [
+    "houdini",
+    "graphql",
+    "lsp",
+    "language-server",
+    "autocomplete"
+  ]
+}
+

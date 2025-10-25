@@ -8,3 +8,20 @@ projects:
             - e2e/kit/src/**/*.gql
             - e2e/kit/src/**/*.svelte
             - e2e/kit/$houdini/graphql/documents.gql
+
+    houdini-lsp:
+        # 👇 For houdini-lsp development and testing
+        schema:
+            - packages/houdini-lsp/schema.graphql
+        documents:
+            - packages/houdini-lsp/**/*.graphql
+        extensions:
+            # Tell GraphQL LSP to ignore Houdini's custom directives
+            customDirectives:
+                - '@arguments'
+                - '@with'
+            languageService:
+                # Disable validation rules that conflict with Houdini directives
+                skipValidationRules:
+                    - NoUndefinedVariables
+                    - KnownDirectives

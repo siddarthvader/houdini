@@ -1,0 +1,12 @@
+
+fragment UserAvatar on User @arguments(width: { type: "Int!" }, variant: { type: "String!" }) {
+	id
+	profilePicture(width: $width, variant: $variant)
+}
+
+query AllUsers {
+	users {
+		...UserAvatar @with(width: 100, variant: "square")
+	}
+}
+

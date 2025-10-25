@@ -1,0 +1,11 @@
+type Query {
+  users: [User!]!
+  user(id: ID!): User
+}
+
+type User {
+  id: ID!
+  name: String!
+  email: String
+  profilePicture(width: Int, variant: String): String
+}
