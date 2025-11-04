@@ -31,7 +31,7 @@ type ServerInfo struct {
 }
 
 type ServerCapabilities struct {
-
+ TextDocumentSync int `json:"textDocumentSync"`
 }
 
 
@@ -46,7 +46,9 @@ func NewInitializeResponse(id int) InitializeResponse {
 				Name: "houdini-lsp",
 				Version: "0.0.1",
 			},
-			Capabilities: &ServerCapabilities{},
+			Capabilities: &ServerCapabilities{
+				TextDocumentSync: 1,
+			},
 		},
 	}
 }

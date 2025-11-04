@@ -40,6 +40,13 @@ func handleMessage(logger *log.Logger, method string, msg []byte) {
 		writer := os.Stdout
 		writer.Write([]byte(reply))
 		logger.Println("Replied to client")
+
+	 case "textDocument/didOpen":
+		var req lsp.DidOpenTextDocumetNotification
+		if err := json.Unmarshal(msg, &req); err != nil {
+			logger.Printf("Error unmarshalling message: %s", err)
+		}
+		logger.Printf("Opened file: %s, %s", req.Params.TextDocument.URI, req.Params.TextDocument.Text)
 	}
 }
 
