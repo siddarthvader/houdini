@@ -8,6 +8,8 @@ import (
 	"strconv"
 )
 
+
+
 // to encode any messdage into lsp jsonrpc format
 func EncodeMessage(msg any) string {
 	content, err := json.Marshal(msg)
