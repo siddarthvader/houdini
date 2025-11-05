@@ -20,7 +20,7 @@ Hopefully this one is easy. There are a few major version updates to Houdini's d
 "graphql": "^16.10.0."
 ```
 
-## Removal of `+page.gql` in SvelteKit projects
+## Removal of `+page.gql` and `@load` in SvelteKit projects
 
 <Warning>
 
