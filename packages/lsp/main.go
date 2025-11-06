@@ -41,7 +41,7 @@ func handleMessage(writer io.Writer, logger *log.Logger, state *compiler.State, 
 	case "initialize":
 		var req lsp.InitializeRequest
 		if err := json.Unmarshal(msg, &req); err != nil {
-			logger.Printf("Error unmarshalling message: %s", err)
+			logger.Printf("initialize Error unmarshalling message: %s", err)
 		}
 
 		logger.Printf("Connected to client: %s version: %s", req.Params.ClientInfo.Name, req.Params.ClientInfo.Version)
@@ -51,7 +51,7 @@ func handleMessage(writer io.Writer, logger *log.Logger, state *compiler.State, 
 	case "textDocument/didOpen":
 		var req lsp.DidOpenTextDocumetNotification
 		if err := json.Unmarshal(msg, &req); err != nil {
-			logger.Printf("Error unmarshalling message: %s", err)
+			logger.Printf("textDocument/didOpen Error unmarshalling message: %s", err)
 		}
 
 		state.AddDocument(req.Params.TextDocument.URI, req.Params.TextDocument.Text)
@@ -59,20 +59,37 @@ func handleMessage(writer io.Writer, logger *log.Logger, state *compiler.State, 
 	case "textDocument/didChange":
 		var req lsp.TextDocumentDidChangeNotification
 		if err := json.Unmarshal(msg, &req); err != nil {
-			logger.Printf("Error unmarshalling message: %s", err)
+			logger.Printf("textDocument/didChange Error unmarshalling message: %s", err)
 		}
 
 		for _, change := range req.Params.ContentChanges {
 			state.UpdateDocument(req.Params.TextDocument.URI, change.Text)
+			// current := state.GetDocument(req.Params.TextDocument.URI)
+			// logger.Printf("cccrrent: %s", req.Params.TextDocument.URI)
+
 		}
 
 	case "textDocument/hover":
 		var req lsp.HoverRequest
 		if err := json.Unmarshal(msg, &req); err != nil {
-			logger.Printf("Error unmarshalling message: %s", err)
+			logger.Printf("textDocument/hover Error unmarshalling message: %s", err)
 		}
 
 		msg := lsp.NewHoverResponse(req.ID)
+		write_response(writer, msg)
+
+	 case "textDocument/completion":
+		var req lsp.CompletionRequest
+		if err := json.Unmarshal(msg, &req); err != nil {
+			logger.Printf("textDocument/completion Error unmarshalling message: %s", err)
+		}
+
+		logger.Printf("Completion triggered at URI: %s, Line: %d, Character: %d",
+			req.Params.TextDocument.URI,
+			req.Params.Position.Line,
+			req.Params.Position.Character)
+
+		msg := lsp.NewCompletionResponse(req.ID)
 		write_response(writer, msg)
 	}
 }

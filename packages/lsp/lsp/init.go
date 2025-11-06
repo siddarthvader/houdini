@@ -30,8 +30,13 @@ type ServerInfo struct {
 }
 
 type ServerCapabilities struct {
-	TextDocumentSync int  `json:"textDocumentSync"`
-	HoverProvider    bool `json:"hoverProvider"`
+	TextDocumentSync   int                `json:"textDocumentSync"`
+	HoverProvider      bool               `json:"hoverProvider"`
+	CompletionProvider *CompletionOptions `json:"completionProvider"`
+}
+
+type CompletionOptions struct {
+	ResolveProvider bool `json:"resolveProvider"`
 }
 
 func NewInitializeResponse(id int) InitializeResponse {
@@ -48,6 +53,9 @@ func NewInitializeResponse(id int) InitializeResponse {
 			Capabilities: &ServerCapabilities{
 				TextDocumentSync: 1,
 				HoverProvider:    true,
+				CompletionProvider: &CompletionOptions{
+					ResolveProvider: true,
+				},
 			},
 		},
 	}

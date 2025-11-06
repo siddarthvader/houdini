@@ -18,3 +18,7 @@ func (s *State) AddDocument(uri string, content string) {
 func (s *State) UpdateDocument(uri string, content string) {
 	s.Document[uri] = content
 }
+
+func (s *State) GetDocument(uri string) string {
+	return s.Document[uri]
+}
