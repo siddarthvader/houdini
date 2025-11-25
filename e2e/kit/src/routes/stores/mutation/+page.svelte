@@ -1,17 +1,16 @@
 <script lang="ts">
-  import { graphql, GQL_UpdateUser } from '$houdini';
-  import { stry } from '../../../lib/utils/helpers.js';
+  import { graphql, UpdateUserStore } from '$houdini';
+  import { stringify } from '$lib/utils/stringify';
+  import type { PageData } from './$types';
 
-  $: query = graphql(`
-    query OptimisticUserQuery @load {
-      user(id: "1", snapshot: "update-user-mutation") {
-        name
-      }
-    }
-  `);
+  export let data: PageData;
+
+  $: ({ OptimisticUserQuery : query } = data)
+
+  const updateUser = new UpdateUserStore();
 
   async function add() {
-    await GQL_UpdateUser.mutate(
+    await updateUser.mutate(
       { id: '1', name: 'JYC', birthDate: new Date('1986-11-07') },
       {
         optimisticResponse: {
@@ -34,5 +33,5 @@
 </div>
 
 <div id="store-value">
-  {stry($GQL_UpdateUser)}
+  {stringify($updateUser)}
 </div>

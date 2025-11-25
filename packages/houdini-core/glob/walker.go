@@ -51,6 +51,11 @@ func (w *Walker) AddExclude(pattern string) error {
 	return nil
 }
 
+func (w *Walker) Matches(fp string) bool {
+	target := strings.Split(fp, "/")
+	return matchHelper(w.includeTree, target) && !matchHelper(w.excludeTree, target)
+}
+
 // Walk traverses the filesystem in parallel starting at root.
 // for each file, it splits the relative path into tokens and
 // calls onFile if the path matches the include tree and does not match the exclude tree.

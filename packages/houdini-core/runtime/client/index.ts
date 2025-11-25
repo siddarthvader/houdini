@@ -1,4 +1,3 @@
-/// <reference path="../../../../../houdini.d.ts" />
 import cacheRef from '../cache'
 import type { Cache } from '../cache/cache'
 import { getCurrentConfig, localApiEndpoint } from '../lib'
@@ -19,7 +18,8 @@ import {
 import pluginsFromPlugins from './plugins/injectedPlugins'
 
 // export the plugin constructors
-export { DocumentStore, type ClientPlugin, type SendParams } from './documentStore'
+export { DocumentStore } from './documentStore.js'
+export type { ClientPlugin, SendParams } from './documentStore.js'
 export { fetch, mutation, query, subscription } from './plugins'
 
 export type HoudiniClientConstructorArgs = {
@@ -33,7 +33,7 @@ export type HoudiniClientConstructorArgs = {
 export type ObserveParams<
 	_Data extends GraphQLObject,
 	_Artifact extends DocumentArtifact = DocumentArtifact,
-	_Input extends GraphQLVariables = GraphQLVariables
+	_Input extends GraphQLVariables | undefined = GraphQLVariables
 > = {
 	artifact: _Artifact
 	enableCache?: boolean
@@ -95,9 +95,8 @@ export class HoudiniClient {
 		// if there is no url provided then assume we are using the internal local api
 		this.url =
 			url ??
-			(globalThis.window ? '' : `https://localhost:${serverPort}`) +
+			(globalThis.window ? '' : `http://localhost:${serverPort}`) +
 				localApiEndpoint(getCurrentConfig())
-
 		this.throwOnError = throwOnError
 		this.fetchParams = fetchParams
 		this.pipeline = pipeline
@@ -134,7 +133,7 @@ export class HoudiniClient {
 		)
 	}
 
-	observe<_Data extends GraphQLObject, _Input extends GraphQLVariables>({
+	observe<_Data extends GraphQLObject, _Input extends GraphQLVariables | undefined>({
 		enableCache = true,
 		fetching = false,
 		...rest

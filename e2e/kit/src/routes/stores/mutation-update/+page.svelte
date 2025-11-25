@@ -1,22 +1,24 @@
 <script lang="ts">
-  import { GQL_UpdateUser } from '$houdini';
-  import { stry } from '../../../lib/utils/helpers.js';
+  import { UpdateUserStore } from '$houdini';
+  import { stringify } from '$lib/utils/stringify';
   import type { PageData } from './$types';
 
   export let data: PageData;
+
+  const updateUser = new UpdateUserStore();
 
   // leave this awkward pattern to make sure this doesn't come back: https://github.com/HoudiniGraphql/houdini/issues/543
   let { TestMutationUpdateUsersList } = data;
   $: ({ TestMutationUpdateUsersList } = data);
 
   async function update() {
-    await GQL_UpdateUser.mutate({
+    await updateUser.mutate({
       id: '5',
       name: 'tmp name update'
     });
   }
   async function revert() {
-    await GQL_UpdateUser.mutate({
+    await updateUser.mutate({
       id: '5',
       name: 'Will Smith'
     });
@@ -37,5 +39,5 @@
 </ul>
 
 <pre>
-  {stry($GQL_UpdateUser)}
+  {stringify($updateUser)}
 </pre>

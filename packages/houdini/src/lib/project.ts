@@ -1,9 +1,8 @@
 import { mergeSchemas } from '@graphql-tools/schema'
 import * as graphql from 'graphql'
-import type { GraphQLSchema } from 'graphql'
 import { pathToFileURL } from 'node:url'
 
-import type { ConfigFile } from './config.js'
+import { Config, type ConfigFile } from './config.js'
 import { houdini_root, local_api_dir } from './conventions.js'
 import { HoudiniError } from './error.js'
 import * as fs from './fs.js'
@@ -30,89 +29,6 @@ export const default_config: ConfigFile = {
 	defaultCachePolicy: 'CacheOrNetwork',
 }
 
-// we need to include some extra meta data along with the config file
-export class Config {
-	public config_file: ConfigFile
-	public filepath: string
-	public plugins: PluginMeta[]
-	public root_dir: string
-	public schema: GraphQLSchema
-
-	constructor(init: {
-		config_file: ConfigFile
-		filepath: string
-		plugins: PluginMeta[]
-		root_dir: string
-		schema: GraphQLSchema
-	}) {
-		this.config_file = init.config_file
-		this.filepath = init.filepath
-		this.plugins = init.plugins
-		this.root_dir = init.root_dir
-		this.schema = init.schema
-	}
-
-	schema_path() {
-		return (
-			this.config_file.schemaPath ?? path.resolve(process.cwd(), 'schema.json')
-		)
-	}
-
-	async api_url() {
-		const apiURL = this.config_file.watchSchema?.url
-		if (!apiURL) {
-			return ''
-		}
-
-		return this.process_env_values(process.env, apiURL)
-	}
-
-	async schema_pull_headers() {
-		const env = process.env
-
-		// if the whole thing is a function, just call it
-		const config_headers = this.config_file.watchSchema?.headers
-		if (typeof config_headers === 'function') {
-			return config_headers(env)
-		}
-
-		// we need to turn the map into the correct key/value pairs
-		const headers = Object.fromEntries(
-			Object.entries(config_headers || {})
-				.map(([key, value]) => {
-					const headerValue = this.process_env_values(env, value)
-
-					// if there was no value, dont add anything
-					if (!headerValue) {
-						return []
-					}
-
-					return [key, headerValue]
-				})
-				.filter(([key]) => key),
-		)
-
-		// we're done
-		return headers
-	}
-
-	process_env_values(
-		env: Record<string, string | undefined>,
-		value: string | ((env: any) => string),
-	) {
-		let headerValue: string | undefined
-		if (typeof value === 'function') {
-			headerValue = value(env)
-		} else if (value.startsWith('env:')) {
-			headerValue = env[value.slice('env:'.length)]
-		} else {
-			headerValue = value
-		}
-
-		return headerValue
-	}
-}
-
 // a place to store the current configuration
 let _config: Config
 
@@ -124,9 +40,11 @@ let pending_config_promises: Promise<Config> | null = null
 export async function get_config({
 	force_reload,
 	config_path: _config_path,
+	skip_schema,
 }: {
 	config_path?: string
 	force_reload?: boolean
+	skip_schema?: boolean
 } = {}): Promise<Config> {
 	let config_path = _config_path ?? ''
 
@@ -179,9 +97,7 @@ export async function get_config({
 		}
 
 		const root_dir = path.dirname(
-			config_file.projectDir
-				? path.join(process.cwd(), config_file.projectDir)
-				: config_path,
+			config_file.projectDir ? path.join(process.cwd(), config_file.projectDir) : config_path
 		)
 
 		// if there is a local schema then we need to ignore the schema check
@@ -206,10 +122,14 @@ export async function get_config({
 
 		_config = new Config({
 			...(partialConfig as Config),
-			schema: local_schema
-				? await load_local_schema(config_file, local_schema)
-				: await load_schema_file(config_file.schemaPath),
 		})
+
+		// when we're pulling the schema, we don't yet have a schema to read.
+		if (!skip_schema) {
+			_config.schema = local_schema
+				? await load_local_schema(config_file, local_schema)
+				: await load_schema_file(config_file.schemaPath)
+		}
 
 		// we need to process the plugins before we instantiate the config object
 		// so that we can compute the final config_file
@@ -220,7 +140,7 @@ export async function get_config({
 		const plugins = Object.entries(config_file.plugins ?? {})
 
 		// we need to add the codegen plugin to the list
-		plugins.push(['houdini-core', { foo: 'bar' }])
+		plugins.unshift(['houdini-core', {}])
 
 		// if the environment variable is defined, add it to the list
 		if (process.env.HOUDINI_CODEGEN_PLUGIN) {
@@ -233,7 +153,7 @@ export async function get_config({
 				name,
 				config,
 				...(await plugin_path(name, config_path)),
-			})),
+			}))
 		)
 
 		// we're done and have a valid config
@@ -257,9 +177,7 @@ async function read_config_file(configPath: string): Promise<ConfigFile> {
 	try {
 		imported = await import(/* @vite-ignore */ importPath)
 	} catch (e: any) {
-		throw new Error(
-			`Could not load config file at file://${configPath}.\n${e.message}`,
-		)
+		throw new Error(`Could not load config file at file://${configPath}.\n${e.message}`)
 	}
 
 	// if this is wrapped in a default, use it
@@ -270,9 +188,7 @@ async function read_config_file(configPath: string): Promise<ConfigFile> {
 	}
 }
 
-async function load_schema_file(
-	schemaPath: string,
-): Promise<graphql.GraphQLSchema> {
+async function load_schema_file(schemaPath: string): Promise<graphql.GraphQLSchema> {
 	// if the schema is not a relative path, the config file is out of date
 	if (path.isAbsolute(schemaPath)) {
 		// compute the new value for schema
@@ -281,7 +197,7 @@ async function load_schema_file(
 		// build up an error with no stack trace so the message isn't so noisy
 		const error = new Error(
 			`Invalid config value: 'schemaPath' must now be passed as a relative directory. Please change ` +
-				`its value to "./${relPath}".`,
+				`its value to "./${relPath}".`
 		)
 		error.stack = ''
 
@@ -296,9 +212,7 @@ async function load_schema_file(
 
 		return mergeSchemas({
 			typeDefs: await Promise.all(
-				sourceFiles.map(
-					async (filepath: string) => (await fs.readFile(filepath))!,
-				),
+				sourceFiles.map(async (filepath: string) => (await fs.readFile(filepath))!)
 			),
 		})
 	}
@@ -333,10 +247,7 @@ async function load_schema_file(
 
 export function internal_routes(config: Config): string[] {
 	const routes = [local_api_dir(config)]
-	if (
-		config.config_file.router?.auth &&
-		'redirect' in config.config_file.router.auth
-	) {
+	if (config.config_file.router?.auth && 'redirect' in config.config_file.router.auth) {
 		routes.push(config.config_file.router.auth.redirect)
 	}
 
@@ -345,13 +256,11 @@ export function internal_routes(config: Config): string[] {
 
 export async function load_local_schema(
 	config: ConfigFile,
-	schema_path: string,
+	schema_path: string
 ): Promise<graphql.GraphQLSchema> {
 	// import the schema we just built
 	try {
-		const { default: schema } = await import(
-			pathToFileURL(schema_path).toString()
-		)
+		const { default: schema } = await import(pathToFileURL(schema_path).toString())
 
 		// now that we have the schema, let's write it to disk so the core plugin
 		// can import it

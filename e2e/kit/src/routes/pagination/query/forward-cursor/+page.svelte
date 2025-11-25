@@ -1,17 +1,11 @@
 <script lang="ts">
   import { CachePolicy, graphql } from '$houdini';
+  import type { PageData } from './$types';
+  import { stringify } from '$lib/utils/stringify';
 
-  $: result = graphql(`
-    query ForwardCursorPaginationQuery @load {
-      usersConnection(first: 2, snapshot: "pagination-query-forwards-cursor") @paginate {
-        edges {
-          node {
-            name
-          }
-        }
-      }
-    }
-  `);
+  export let data: PageData;
+
+  $: ({ ForwardCursorPaginationQuery: result } = data);
 </script>
 
 <div id="result">
@@ -19,7 +13,7 @@
 </div>
 
 <div id="pageInfo">
-  {JSON.stringify($result.pageInfo)}
+  {stringify($result.pageInfo)}
 </div>
 
 <button id="next" on:click={() => result.loadNextPage()}>next</button>

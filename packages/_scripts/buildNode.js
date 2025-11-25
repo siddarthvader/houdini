@@ -74,11 +74,11 @@ export async function buildPackage({ packageJSONPath, source, outDir, plugin, on
 				import: `./build/${dirname}/index.js`,
 			}
 			package_json.types = `./build/${dirname}/index.d.ts`
-			package_json.typesVersions['*']['.'] = [`build/${dirname}/index.d.ts`]
+			package_json.typesVersions['*']['.'] = [`./build/${dirname}/index.d.ts`]
 		}
-		// runtimes can't be bundled
+		// runtimes can't be bundled and should be copied as raw .ts files
 		else if (dirname === 'runtime') {
-			await build({ outDir, packages, source: dir, bundle: false, plugin })
+			await copyRuntimeFiles({ outDir, source: dir })
 		}
 		// cmd can now be unbundled since we fixed all import paths
 		else if (dirname === 'cmd') {
@@ -100,7 +100,7 @@ export async function buildPackage({ packageJSONPath, source, outDir, plugin, on
 				types: `./build/${dirname}/index.d.ts`,
 				import: `./build/${dirname}/index.js`,
 			}
-			package_json.typesVersions['*'][dirname] = [`build/${dirname}/index.d.ts`]
+			package_json.typesVersions['*'][dirname] = [`./build/${dirname}/index.d.ts`]
 		}
 	}
 
@@ -145,7 +145,7 @@ export async function buildPackage({ packageJSONPath, source, outDir, plugin, on
 				for (const [subKey, subValue] of Object.entries(value)) {
 					if (Array.isArray(subValue)) {
 						buildPackageJson.typesVersions[key][subKey] = subValue.map((path) =>
-							path.startsWith('build/') ? path.replace('build/', '') : path
+							path.startsWith('./build/') ? path.replace('./build/', './') : path
 						)
 					}
 				}
@@ -243,4 +243,38 @@ export async function build({ outDir, packages, source, bundle = true, plugin, c
 		console.log(e)
 		process.exit(1)
 	}
+}
+
+// copy runtime files as raw .ts/.tsx files without compilation
+export async function copyRuntimeFiles({ outDir, source }) {
+	// find all .ts and .tsx files in the runtime directory, excluding test files
+	const files = await glob(path.join(source, '**/*.ts*').replaceAll('\\', '/'), {
+		nodir: true,
+		ignore: ['**/*.test.*', '**/test.ts'],
+	})
+
+	// where we will put everything
+	const target_dir = path.join(outDir, path.basename(source))
+
+	// ensure target directory exists
+	await fs.mkdir(target_dir, { recursive: true })
+
+	// copy each file preserving directory structure
+	for (const file of files) {
+		const relativePath = path.relative(source, file)
+		const targetPath = path.join(target_dir, relativePath)
+
+		// ensure target subdirectory exists
+		await fs.mkdir(path.dirname(targetPath), { recursive: true })
+
+		// copy the file
+		await fs.copyFile(file, targetPath)
+	}
+
+	// create a package.json to mark it as ESM
+	await fs.writeFile(
+		path.join(target_dir, 'package.json'),
+		JSON.stringify({ type: 'module' }),
+		'utf-8'
+	)
 }

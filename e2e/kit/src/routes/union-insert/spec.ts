@@ -1,6 +1,7 @@
 import { test } from '@playwright/test';
 import { routes } from '../../lib/utils/routes.js';
 import { expect_1_gql, expect_to_be, goto } from '../../lib/utils/testsHelper.js';
+import { stringify } from '../../lib/utils/testsHelper.js';
 
 test.describe('union-result', () => {
   test('Get two stores and not resetting', async ({ page }) => {
@@ -13,7 +14,7 @@ test.describe('union-result', () => {
     await expect_1_gql(page, 'button[id="addA"]');
 
     // expect 1 element in the array
-    await expect_to_be(page, '{"aOrB":[{"id":"1","a":"MyA","__typename":"A"}]}');
+    await expect_to_be(page, stringify({"aOrB":[{"id":"1","a":"MyA","__typename":"A"}]}));
 
     // we click on the button to getAllUsers
     await expect_1_gql(page, 'button[id="addB"]');
@@ -21,7 +22,7 @@ test.describe('union-result', () => {
     // expect 2 elements in the array
     await expect_to_be(
       page,
-      '{"aOrB":[{"id":"1","a":"MyA","__typename":"A"},{"id":"1","b":"MyB","__typename":"B"}]}'
+      stringify({"aOrB":[{"id":"1","a":"MyA","__typename":"A"},{"id":"1","b":"MyB","__typename":"B"}]})
     );
   });
 });

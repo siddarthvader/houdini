@@ -2,7 +2,7 @@ package schema_test
 
 import (
 	"context"
-	"path"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -37,7 +37,7 @@ func TestSchema(t *testing.T) {
 				invalid := "this is not a valid graphql schema"
 				return afero.WriteFile(
 					fs,
-					path.Join("/project", "schema.graphql"),
+					filepath.Join("/project", "schema.graphql"),
 					[]byte(invalid),
 					0644,
 				)
@@ -62,7 +62,7 @@ func TestSchema(t *testing.T) {
 				`
 				return afero.WriteFile(
 					fs,
-					path.Join("/project", "schema.graphql"),
+					filepath.Join("/project", "schema.graphql"),
 					[]byte(schemaContent),
 					0644,
 				)
@@ -112,12 +112,13 @@ func TestSchema(t *testing.T) {
 			conn, err := db.Take(context.Background())
 			require.Nil(t, err)
 
-			err = tests.WriteHoudiniSchema(conn)
+			err = tests.WriteDatabaseSchema(conn)
 			db.Put(conn)
 			require.Nil(t, err)
 
 			// Create the HoudiniCore instance and set its DB.
-			core := &houdiniCore.HoudiniCore{Fs: fs}
+			core := &houdiniCore.HoudiniCore{}
+			core.SetFilesystem(fs)
 			core.SetDatabase(db)
 
 			// Call the Schema method.

@@ -1,34 +1,11 @@
 <script lang="ts">
   import { CachePolicy, graphql } from '$houdini';
+  import type { PageData } from './$types'
+  import { stringify } from '$lib/utils/stringify';
 
-  $: result = graphql(`
-    query BidirectionalCursorSinglePagePaginationQuery(
-      $first: Int = 2
-      $after: String = "YXJyYXljb25uZWN0aW9uOjE="
-      $last: Int
-      $before: String
-    ) @load {
-      usersConnection(
-        first: $first
-        after: $after
-        last: $last
-        before: $before
-        snapshot: "pagination-query-bidiriectional-cursor-single-page"
-      ) @paginate(mode: SinglePage) {
-        edges {
-          node {
-            name
-          }
-        }
-        pageInfo {
-          endCursor
-          hasNextPage
-          hasPreviousPage
-          startCursor
-        }
-      }
-    }
-  `);
+  export let data: PageData
+
+  $: ({ BidirectionalCursorSinglePagePaginationQuery: result } = data);
 </script>
 
 <div id="result">
@@ -36,7 +13,7 @@
 </div>
 
 <div id="pageInfo">
-  {JSON.stringify($result.data?.usersConnection.pageInfo)}
+  {stringify($result.data?.usersConnection.pageInfo)}
 </div>
 
 <button

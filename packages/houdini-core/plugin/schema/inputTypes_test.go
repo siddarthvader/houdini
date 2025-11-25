@@ -2,7 +2,7 @@ package schema_test
 
 import (
 	"context"
-	"path"
+	"path/filepath"
 	"testing"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
@@ -13,7 +13,7 @@ import (
 )
 
 func TestInputTypeDefinitions(t *testing.T) {
-	tests.RunTable(t, tests.Table[config.PluginConfig]{
+	tests.RunTable(t, tests.Table[config.PluginConfig, *plugin.HoudiniCore]{
 		Schema: `
 				enum MyEnum {
 					Value1
@@ -67,10 +67,10 @@ func TestInputTypeDefinitions(t *testing.T) {
 			require.NoError(t, err)
 
 			// we need to look at the input definitions file and confirm that we generated the correct types
-			targetPath := path.Join(config.DefinitionsDirectory(), "inputs.d.ts")
+			targetPath := filepath.Join(config.DefinitionsDirectory(), "inputs.ts")
 
 			expected := tests.Dedent(`
-				import { MyEnum, Priority, Status } from './enums.js';
+				import { MyEnum$options, Priority$options, Status$options } from './enums.js';
 
 				type ValueOf<T> = T[keyof T];
 
@@ -89,13 +89,13 @@ func TestInputTypeDefinitions(t *testing.T) {
 				};
 
 				export type TaskFilter = {
-				    backupStatus?: ValueOf<typeof Status> | null | undefined;
-				    priority?: ValueOf<typeof Priority> | null | undefined;
-				    status?: ValueOf<typeof Status> | null | undefined;
+				    backupStatus?: Status$options | null | undefined;
+				    priority?: Priority$options | null | undefined;
+				    status?: Status$options | null | undefined;
 				};
 
 				export type UserFilter = {
-				    enum?: ValueOf<typeof MyEnum> | null | undefined;
+				    enum?: MyEnum$options | null | undefined;
 				    listRequired: (string)[];
 				    middle?: NestedUserFilter | null | undefined;
 				    nullList?: (string | null)[] | null | undefined;

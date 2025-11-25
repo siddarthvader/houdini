@@ -2,7 +2,7 @@ package runtime_test
 
 import (
 	"context"
-	"path"
+	"path/filepath"
 	"testing"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
@@ -15,7 +15,7 @@ import (
 )
 
 func TestPluginIndexGeneration(t *testing.T) {
-	tests.RunTable(t, tests.Table[config.PluginConfig]{
+	tests.RunTable(t, tests.Table[config.PluginConfig, *plugin.HoudiniCore]{
 		Schema: `type Query { hello: String }`,
 		Tests: []tests.Test[config.PluginConfig]{
 			{
@@ -33,7 +33,7 @@ func TestPluginIndexGeneration(t *testing.T) {
 
 			// read the index contents
 			indexContent, err := afero.ReadFile(plugin.Fs,
-				path.Join(config.ProjectRoot, config.RuntimeDir, "plugins", "index.js"),
+				filepath.Join(config.ProjectRoot, config.RuntimeDir, "plugins", "index.ts"),
 			)
 			require.Nil(t, err)
 
@@ -41,17 +41,6 @@ func TestPluginIndexGeneration(t *testing.T) {
 				t,
 				`export * from "../runtime/client/plugins/index.js"`,
 				string(indexContent),
-			)
-
-			// read the type definition contents
-			indexDTsContent, err := afero.ReadFile(plugin.Fs,
-				path.Join(config.ProjectRoot, config.RuntimeDir, "plugins", "index.d.ts"),
-			)
-			require.Nil(t, err)
-			require.Equal(
-				t,
-				`export * from "../runtime/client/plugins/index.js"`,
-				string(indexDTsContent),
 			)
 		},
 	})

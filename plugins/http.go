@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"path"
+	"path/filepath"
 	"sort"
+
+	"github.com/spf13/afero"
 )
 
 // the hooks that a plugin defines dictate a set of events that the plugin must repond to
@@ -33,7 +35,8 @@ func pluginHooks[PluginConfig any](
 	// --- AfterLoad is triggered for StaticRuntime OR AfterLoad
 	_, isStaticRuntime := plugin.(StaticRuntime)
 	_, isAfterLoad := plugin.(AfterLoad)
-	register("/afterload", "AfterLoad", isStaticRuntime || isAfterLoad,
+	_, hasDefaultConfig := plugin.(DefaultConfig[PluginConfig])
+	register("/afterload", "AfterLoad", isStaticRuntime || isAfterLoad || hasDefaultConfig,
 		InjectContext(EventHook(handleAfterLoad(plugin))))
 
 	// --- GenerateRuntime is triggered for IncludeRuntime OR GenerateRuntime
@@ -106,6 +109,11 @@ func pluginHooks[PluginConfig any](
 			InjectContext(EventHook(p.AfterGenerate)))
 	}
 
+	if _, ok := plugin.(IndexFile); ok {
+		register("/IndexFile", "IndexFile", true,
+			InjectContext(EventHook(handleIndexFile(plugin))))
+	}
+
 	// return stable list
 	out := make([]string, 0, len(hooks))
 	for h := range hooks {
@@ -119,7 +127,7 @@ func InjectContext(next http.Handler) http.Handler {
 	// the task id is passed in the request headers
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// get the task id from the request headers
-		taskID := r.Header.Get("X-Task-ID")
+		taskID := r.Header.Get("X-Task-Id")
 
 		// add the task id to the context
 		ctx := ContextWithPluginDir(
@@ -207,54 +215,46 @@ type ExtractDocumentsInput struct {
 	Filepaths []string `json:"filepaths"`
 }
 
+func handleIndexFile[PluginConfig any](
+	plugin HoudiniPlugin[PluginConfig],
+) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		config, err := plugin.Database().ProjectConfig(ctx)
+		if err != nil {
+			return err
+		}
+
+		updater := plugin.(IndexFile)
+
+		targetPath := filepath.Join(config.ProjectRoot, config.RuntimeDir, "index.ts")
+
+		content, err := updater.IndexFile(ctx, targetPath)
+		if err != nil {
+			return err
+		}
+
+		existingContent, err := afero.ReadFile(plugin.Filesystem(), targetPath)
+		if err != nil {
+			return err
+		}
+
+		newContent := string(existingContent) + "\n" + content
+
+		err = afero.WriteFile(plugin.Filesystem(), targetPath, []byte(newContent), 0644)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+}
+
 func handleGenerateRuntime[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
 ) func(ctx context.Context) ([]string, error) {
 	return func(ctx context.Context) ([]string, error) {
-		paths := []string{}
-
-		if generate, ok := plugin.(GenerateRuntime); ok {
-			filepaths, err := generate.GenerateRuntime(ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			paths = append(paths, filepaths...)
-		}
-
-		// if the plugin defines a runtime to be included then we should include it now
-		if includeRuntime, ok := plugin.(IncludeRuntime); ok {
-			runtimeDir, err := includeRuntime.IncludeRuntime(ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			config, err := plugin.Database().ProjectConfig(ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			runtimePath := path.Join(PluginDirFromContext(ctx), runtimeDir)
-			targetPath := config.PluginRuntimeDirectory(plugin.Name())
-
-			// the plugin could have defined a transform for the runtime
-			transform := func(ctx context.Context, source string, content string) (string, error) { return content, nil }
-			if transformer, ok := plugin.(TransformRuntime); ok {
-				transform = transformer.TransformRuntime
-			}
-
-			// copy the plugin runtime to the runtime directory
-			updated, err := RecursiveCopy(ctx, runtimePath, targetPath, transform)
-			if err != nil {
-				return nil, err
-			}
-
-			// add any updated paths to the list
-			paths = append(paths, updated...)
-		}
-
-		// nothing went wrong
-		return paths, nil
+		// Use the OS filesystem for production
+		return CopyPluginRuntime(ctx, plugin, afero.NewOsFs())
 	}
 }
 
@@ -262,6 +262,32 @@ func handleAfterLoad[PluginConfig any](
 	plugin HoudiniPlugin[PluginConfig],
 ) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
+		// if the plugin specifies default configuration values we should load that
+		// before anything else
+		if defaultConfig, ok := plugin.(DefaultConfig[PluginConfig]); ok {
+			config, err := defaultConfig.DefaultConfig(ctx)
+			if err != nil {
+				return err
+			}
+
+			marshaled, err := json.Marshal(config)
+			if err != nil {
+				return err
+			}
+
+			// now that we have the updated values we need to persist them to the databse
+			updateConfig := `
+				UPDATE plugins SET config = $config WHERE name = $name
+			`
+			err = plugin.Database().ExecQuery(ctx, updateConfig, map[string]any{
+				"config": string(marshaled),
+				"name":   plugin.Name(),
+			})
+			if err != nil {
+				return err
+			}
+		}
+
 		// if the plugin defines a runtime to include
 		if staticRuntime, ok := plugin.(StaticRuntime); ok {
 			config, err := plugin.Database().ProjectConfig(ctx)
@@ -274,17 +300,17 @@ func handleAfterLoad[PluginConfig any](
 				return err
 			}
 
-			runtimeSource := path.Join(PluginDirFromContext(ctx), runtimePath)
+			runtimeSource := filepath.Join(PluginDirFromContext(ctx), runtimePath)
 			targetPath := config.PluginStaticRuntimeDirectory(plugin.Name())
 
 			// the plugin could have defined a transform for the runtime
 			transform := func(ctx context.Context, source string, content string) (string, error) { return content, nil }
-			if transformer, ok := plugin.(TransformRuntime); ok {
-				transform = transformer.TransformRuntime
+			if transformer, ok := plugin.(TransformStaticRuntime); ok {
+				transform = transformer.TransformStaticRuntime
 			}
 
 			// copy the plugin runtime to the runtime directory
-			_, err = RecursiveCopy(ctx, runtimeSource, targetPath, transform)
+			_, err = RecursiveCopy(ctx, afero.NewOsFs(), runtimeSource, targetPath, transform)
 			if err != nil {
 				return err
 			}

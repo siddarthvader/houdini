@@ -2,7 +2,7 @@ package plugin
 
 import (
 	"context"
-	"path"
+	"path/filepath"
 
 	"code.houdinigraphql.com/packages/houdini-core/plugin/documents"
 	"code.houdinigraphql.com/packages/houdini-core/plugin/runtime"
@@ -11,6 +11,24 @@ import (
 	"github.com/spf13/afero"
 	"golang.org/x/sync/errgroup"
 )
+
+func (p *HoudiniCore) IncludeRuntime(ctx context.Context) (string, error) {
+	return "runtime", nil
+}
+
+func (p *HoudiniCore) TransformRuntime(
+	ctx context.Context,
+	filepath string,
+	content string,
+) (string, error) {
+	// we need the project config to check for paths
+	config, err := p.DB.ProjectConfig(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	return runtime.TransformRuntime(ctx, p.DB, config, filepath, content)
+}
 
 func (p *HoudiniCore) GenerateRuntime(ctx context.Context) ([]string, error) {
 	config, err := p.DB.ProjectConfig(ctx)
@@ -63,9 +81,10 @@ func (p *HoudiniCore) GenerateRuntime(ctx context.Context) ([]string, error) {
 
 		return nil
 	})
+
 	// generate the runtime index file
 	g.Go(func() error {
-		targetPath := path.Join(config.ProjectRoot, config.RuntimeDir, "index.js")
+		targetPath := filepath.Join(config.ProjectRoot, config.RuntimeDir, "index.ts")
 
 		// before we generate the index file let's look at its current content
 		existingContent := ""
@@ -117,22 +136,4 @@ func (p *HoudiniCore) GenerateRuntime(ctx context.Context) ([]string, error) {
 
 	// we're done
 	return generated.GetItems(), nil
-}
-
-func (p *HoudiniCore) IncludeRuntime(ctx context.Context) (string, error) {
-	return "runtime", nil
-}
-
-func (p *HoudiniCore) TransformRuntime(
-	ctx context.Context,
-	filepath string,
-	content string,
-) (string, error) {
-	// we need the project config to check for paths
-	config, err := p.DB.ProjectConfig(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	return runtime.TransformRuntime(ctx, p.DB, config, filepath, content)
 }

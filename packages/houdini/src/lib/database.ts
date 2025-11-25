@@ -2,7 +2,8 @@ import path from 'node:path'
 import type sqlite from 'node:sqlite'
 
 import type { PluginSpec } from './codegen.js'
-import { type Config, default_config } from './project.js'
+import type { Config } from './config.js'
+import { default_config } from './project.js'
 
 export const create_schema = `
 CREATE TABLE IF NOT EXISTS plugins (
@@ -211,7 +212,7 @@ CREATE TABLE IF NOT EXISTS document_variable_directive_arguments (
 CREATE TABLE IF NOT EXISTS document_variables (
  	id INTEGER PRIMARY KEY AUTOINCREMENT,
     document TEXT NOT NULL,
-    name INTEGER NOT NULL,
+    name TEXT NOT NULL,
     type TEXT NOT NULL,
     type_modifiers TEXT,
     default_value INT,
@@ -219,7 +220,8 @@ CREATE TABLE IF NOT EXISTS document_variables (
     column INTEGER NOT NULL,
 
     FOREIGN KEY (default_value) REFERENCES argument_values(id) ON DELETE CASCADE,
-    FOREIGN KEY (document) REFERENCES documents(id) ON DELETE CASCADE
+    FOREIGN KEY (document) REFERENCES documents(id) ON DELETE CASCADE,
+    UNIQUE (document, name)
 );
 
 -- this is pulled out separately from operations and fragments so foreign keys can be used
@@ -231,6 +233,9 @@ CREATE TABLE IF NOT EXISTS documents (
     type_condition TEXT,
     hash TEXT,
     printed TEXT,
+		internal boolean default false,
+		visible boolean default true,
+		processed boolean default false,
     FOREIGN KEY (type_condition) REFERENCES types(name) ON DELETE CASCADE,
     FOREIGN KEY (raw_document) REFERENCES raw_documents(id) ON DELETE CASCADE
 );
@@ -241,7 +246,8 @@ CREATE TABLE IF NOT EXISTS selections (
 	kind TEXT NOT NULL CHECK (kind IN ('field', 'fragment', 'inline_fragment')),
     alias TEXT,
     type TEXT, -- should be something like User.Avatar
-    fragment_ref TEXT -- used when fragment arguments cause a hash to be inlined (removing the ability to track what the original fragment is)
+    fragment_ref TEXT, -- used when fragment arguments cause a hash to be inlined (removing the ability to track what the original fragment is)
+		fragment_args JSON -- used to store the arguments that are used when fragment variables are expanded
 );
 
 CREATE TABLE IF NOT EXISTS selection_directives (
@@ -351,7 +357,7 @@ CREATE TABLE IF NOT EXISTS discovered_lists (
     connection_type TEXT NOT NULL,
     node INTEGER NOT NULL,
     page_size INTEGER NOT NULL,
-    raw_document INTEGER NOT NULL,
+    document INTEGER NOT NULL,
     mode TEXT NOT NULL,
     embedded BOOLEAN NOT NULL,
     target_type TEXT NOT NULL,
@@ -365,7 +371,7 @@ CREATE TABLE IF NOT EXISTS discovered_lists (
     FOREIGN KEY (list_field) REFERENCES selections(id) ON DELETE CASCADE,
 	  FOREIGN KEY (node) REFERENCES selections(id) ON DELETE CASCADE,
     FOREIGN KEY (node_type) REFERENCES types(name) ON DELETE CASCADE,
-    FOREIGN KEY (raw_document) REFERENCES raw_documents(id) ON DELETE CASCADE
+    FOREIGN KEY (document) REFERENCES documents(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS document_dependencies (
@@ -381,7 +387,7 @@ CREATE TABLE IF NOT EXISTS document_dependencies (
 -----------------------------------------------------------
 
 CREATE INDEX IF NOT EXISTS idx_component_fields_type_fields ON component_fields(type_field);
-CREATE INDEX IF NOT EXISTS idx_discovered_lists_raw_document ON discovered_lists(raw_document);
+CREATE INDEX IF NOT EXISTS idx_discovered_lists_document ON discovered_lists(document);
 CREATE INDEX IF NOT EXISTS idx_discovered_lists_node ON discovered_lists(node);
 CREATE INDEX IF NOT EXISTS idx_discovered_lists_list_field ON discovered_lists(list_field);
 CREATE INDEX IF NOT EXISTS idx_discovered_lists_connection ON discovered_lists(connection);
@@ -396,6 +402,8 @@ CREATE INDEX IF NOT EXISTS idx_documents_raw_document ON documents(raw_document)
 CREATE INDEX IF NOT EXISTS idx_selection_refs_parent_id ON selection_refs(parent_id);
 CREATE INDEX IF NOT EXISTS idx_selection_refs_child_id ON selection_refs(child_id);
 CREATE INDEX IF NOT EXISTS idx_selection_refs_document ON selection_refs(document);
+-- Composite index for common query patterns in CollectDocuments
+CREATE INDEX IF NOT EXISTS idx_selection_refs_document_parent_id ON selection_refs(document, parent_id);
 CREATE INDEX IF NOT EXISTS idx_document_variable_directives_parent ON document_variable_directives(parent);
 CREATE INDEX IF NOT EXISTS idx_document_variable_directives_directive ON document_variable_directives(directive);
 CREATE INDEX IF NOT EXISTS idx_document_variable_directive_arguments_parent ON document_variable_directive_arguments(parent);
@@ -427,6 +435,16 @@ CREATE INDEX IF NOT EXISTS idx_selection_directive_arguments_value ON selection_
 CREATE INDEX IF NOT EXISTS idx_argument_value_children_value ON argument_value_children(value);
 CREATE INDEX IF NOT EXISTS idx_document_dependency_document on document_dependencies(document);
 CREATE INDEX IF NOT EXISTS idx_document_dependency_depends_on on document_dependencies(depends_on);
+-- Performance optimization: composite index for argument_values joins with documents
+CREATE INDEX IF NOT EXISTS idx_argument_values_document_id ON argument_values(document, id);
+-- Additional performance optimizations for the recursive CTE query
+CREATE INDEX IF NOT EXISTS idx_argument_value_children_parent_value ON argument_value_children(parent, value);
+-- Complex query optimizations based on query analysis
+CREATE INDEX IF NOT EXISTS idx_selections_field_name_kind ON selections(field_name, kind);
+CREATE INDEX IF NOT EXISTS idx_documents_name_kind ON documents(name, kind);
+CREATE INDEX IF NOT EXISTS idx_document_variables_document_id ON document_variables(document, id);
+CREATE INDEX IF NOT EXISTS idx_argument_values_expected_type_document ON argument_values(expected_type, document);
+CREATE INDEX IF NOT EXISTS idx_document_variables_document_type_modifiers_default ON document_variables(document, type_modifiers, default_value);
 `
 
 export async function write_config(
@@ -435,10 +453,10 @@ export async function write_config(
 	invoke_hook: (
 		plugin: string,
 		hook: string,
-		args: Record<string, any>,
+		args: Record<string, any>
 	) => Promise<Record<string, any>>,
-	plugins: Record<string, PluginSpec>,
-	mode: string,
+	plugins: Array<PluginSpec>,
+	mode: string
 ) {
 	// in order to know our configuration values, we need to load the current environment
 	// to do this we need to look at each plugin that supports the environment hook
@@ -448,16 +466,13 @@ export async function write_config(
 	console.time('Environment')
 	// look at each plugin
 	await Promise.all(
-		Object.values(plugins).map(async (plugin) => {
+		plugins.map(async (plugin) => {
 			// if the plugin supports the environment hook
 			if (plugin.hooks.has('Environment')) {
 				// we need to hit the corresponding endpoint in the plugin server
-				Object.assign(
-					env,
-					await invoke_hook(plugin.name, 'environment', { mode }),
-				)
+				Object.assign(env, await invoke_hook(plugin.name, 'environment', { mode }))
 			}
-		}),
+		})
 	)
 	console.timeEnd('Environment')
 
@@ -500,17 +515,17 @@ export async function write_config(
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		)
-	`,
+	`
 	).run(
 		JSON.stringify(
 			typeof config_file.include === 'string'
 				? [config_file.include]
-				: (config_file.include ?? []),
+				: config_file.include ?? []
 		),
 		JSON.stringify(
 			typeof config_file.exclude === 'string'
 				? [config_file.exclude]
-				: (config_file.exclude ?? []),
+				: config_file.exclude ?? []
 		),
 		config_file.schemaPath!,
 		config_file.definitionsPath ?? '',
@@ -520,32 +535,26 @@ export async function write_config(
 		config_file.defaultLifetime ?? null,
 		config_file.defaultListPosition ?? null,
 		config_file.defaultListTarget ?? null,
-		config_file.defaultPaginateMode ?? null,
+		config_file.defaultPaginateMode ?? 'Infinite',
 		config_file.supressPaginationDeduplication ? 1 : 0,
 		config_file.logLevel ?? null,
 		config_file.defaultFragmentMasking === 'enable' ? 1 : 0,
 		JSON.stringify(config_file.defaultKeys ?? []),
-		config_file.persistedQueriesPath ??
-			path.join(config_file.runtimeDir!, 'queries.json'),
+		config_file.persistedQueriesPath ?? path.join(config_file.runtimeDir!, 'queries.json'),
 		config.root_dir ?? null,
 		config_file.runtimeDir ?? null,
-		config.filepath ?? null,
+		config.filepath ?? null
 	)
 
 	// write the scalar definitions
-	let insert = db.prepare(
-		'INSERT INTO runtime_scalar_definitions (name, type) VALUES (?, ?)',
-	)
-	for (const [name, { type }] of Object.entries(
-		config.config_file.runtimeScalars ?? {},
-	)) {
+	let insert = db.prepare('INSERT INTO runtime_scalar_definitions (name, type) VALUES (?, ?)')
+	for (const [name, { type }] of Object.entries(config.config_file.runtimeScalars ?? {})) {
 		insert.run(name, type)
 	}
 
 	// write router config
 	if (config.config_file.router) {
-		let session_keys =
-			config.config_file.router.auth?.sessionKeys.join(',') ?? ''
+		let session_keys = config.config_file.router.auth?.sessionKeys.join(',') ?? ''
 		let api_endpoint: string | null = null
 		let url: string | null = null
 		let mutation: string | null = null
@@ -568,7 +577,7 @@ export async function write_config(
 				mutation,
 				redirect,
 				api_endpoint
-			) VALUES (?, ?, ?, ?, ?, ?)`,
+			) VALUES (?, ?, ?, ?, ?, ?)`
 		).run(redirect, session_keys, url, mutation, redirect, api_endpoint)
 	}
 
@@ -581,48 +590,36 @@ export async function write_config(
 		const headers = !config.config_file.watchSchema.headers
 			? {}
 			: typeof config.config_file.watchSchema.headers === 'function'
-				? typeof config.config_file.watchSchema.headers(env)
-				: typeof config.config_file.watchSchema.headers
+			? typeof config.config_file.watchSchema.headers(env)
+			: typeof config.config_file.watchSchema.headers
 		db.prepare(
 			`INSERT INTO watch_schema_config (
 				url,
 				headers,
 				interval,
 				timeout
-			) VALUES (?, ?, ?, ?)`,
+			) VALUES (?, ?, ?, ?)`
 		).run(
 			url,
 			JSON.stringify(headers),
 			config.config_file.watchSchema.interval ?? null,
-			config.config_file.watchSchema.timeout ?? null,
+			config.config_file.watchSchema.timeout ?? null
 		)
 	}
 
 	// write the scalar configs
-	insert = db.prepare(
-		'INSERT INTO scalar_config (name, type, input_types) VALUES (?, ?, ?)',
-	)
-	for (const [name, { type, inputTypes }] of Object.entries(
-		config.config_file.scalars ?? {},
-	)) {
-		insert.run(
-			name,
-			type,
-			JSON.stringify(((inputTypes as Array<string>) ?? []).concat(name)),
-		)
+	insert = db.prepare('INSERT INTO scalar_config (name, type, input_types) VALUES (?, ?, ?)')
+	for (const [name, { type, inputTypes }] of Object.entries(config.config_file.scalars ?? {})) {
+		insert.run(name, type, JSON.stringify(((inputTypes as Array<string>) ?? []).concat(name)))
 	}
 
 	// write the type configs
-	insert = db.prepare(
-		'INSERT INTO type_configs (name, keys, resolve_query) VALUES (?, ?, ?)',
-	)
-	for (const [name, { keys, resolve }] of Object.entries(
-		config.config_file.types ?? {},
-	)) {
+	insert = db.prepare('INSERT INTO type_configs (name, keys, resolve_query) VALUES (?, ?, ?)')
+	for (const [name, { keys, resolve }] of Object.entries(config.config_file.types ?? {})) {
 		insert.run(
 			name,
 			JSON.stringify(keys || config_file.defaultKeys || []),
-			resolve?.queryField || null,
+			resolve?.queryField || null
 		)
 	}
 }

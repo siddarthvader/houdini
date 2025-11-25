@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"path"
 	"path/filepath"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
@@ -22,10 +21,8 @@ func GeneratePluginIndex(
 		return err
 	}
 
-	indexPath := path.Join(config.ProjectRoot, config.RuntimeDir, "plugins", "index.js")
-	dtsPath := path.Join(config.ProjectRoot, config.RuntimeDir, "plugins", "index.d.ts")
+	indexPath := filepath.Join(config.ProjectRoot, config.RuntimeDir, "plugins", "index.ts")
 
-	// both files get the same contents
 	content := `export * from "../runtime/client/plugins/index.js"`
 
 	// make sure the direcotry exists
@@ -36,10 +33,6 @@ func GeneratePluginIndex(
 
 	// write the file contents
 	err = afero.WriteFile(fs, indexPath, []byte(content), 0o644)
-	if err != nil {
-		return err
-	}
-	err = afero.WriteFile(fs, dtsPath, []byte(content), 0o644)
 	if err != nil {
 		return err
 	}

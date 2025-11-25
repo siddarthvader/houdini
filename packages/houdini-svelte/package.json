@@ -2,9 +2,21 @@
     "name": "houdini-svelte",
     "version": "1.4.2",
     "scripts": {
-        "compile": "scripts build-go"
+        "compile": "scripts build-go",
+        "typedefs": "scripts typedefs --plugin --go-package"
+    },
+    "dependencies": {
+        "@sveltejs/kit": "^2.46.5",
+        "estree-walker": "^3.0.1",
+        "houdini": "workspace:^",
+        "rollup": "^4.28.1",
+        "svelte": "^5.0.0",
+        "vite": "^7.0.0"
     },
     "devDependencies": {
-        "scripts": "workspace:^"
+        "@sveltejs/kit": "^2.46.5",
+        "ast-types": "^0.16.1",
+        "scripts": "workspace:^",
+        "svelte": "^5.19.0"
     }
 }

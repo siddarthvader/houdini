@@ -1,6 +1,8 @@
-import { type Adapter, detectTools } from 'houdini'
+import type { Adapter } from 'houdini'
 import { resolve } from 'import-meta-resolve'
 import { execSync } from 'node:child_process'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const adapters = [
@@ -101,6 +103,87 @@ async function importFromCwd(name: string) {
 	const url = resolve(name, cwd + '/x.js')
 
 	return (await import(url)).default
+}
+
+async function detectTools(cwd: string = process.cwd()): Promise<DetectedTools> {
+	let typescript = false
+	try {
+		await fs.stat(path.join(cwd, 'tsconfig.json'))
+		typescript = true
+	} catch {}
+
+	// package manager?
+	let package_manager: 'npm' | 'yarn' | 'pnpm' = 'npm'
+	let dir = cwd
+	do {
+		try {
+			await fs.access(path.join(dir, 'pnpm-lock.yaml'))
+			package_manager = 'pnpm'
+			break
+		} catch {}
+
+		try {
+			await fs.access(path.join(dir, 'yarn.lock'))
+			package_manager = 'yarn'
+			break
+		} catch {}
+	} while (dir !== (dir = path.dirname(dir)))
+
+	return {
+		typescript,
+		package_manager,
+		...(await detectFromPackageJSON(cwd)),
+	}
+}
+
+type HoudiniFrameworkInfo =
+	| {
+			framework: 'kit'
+	  }
+	| {
+			framework: 'svelte'
+	  }
+
+type DetectedTools = {
+	typescript: boolean
+	package_manager: 'npm' | 'yarn' | 'pnpm'
+} & DetectedFromPackageTools
+
+async function detectFromPackageJSON(cwd: string): Promise<DetectedFromPackageTools> {
+	// if there's no package.json then there's nothing we can detect
+	let packageJSON: Record<string, any>
+	try {
+		const packageJSONFile = await fs.readFile(path.join(cwd, 'package.json'), 'utf-8')
+		if (packageJSONFile) {
+			packageJSON = JSON.parse(packageJSONFile)
+		} else {
+			throw new Error('not found')
+		}
+	} catch {
+		throw new Error(
+			'❌ houdini init must target an existing node project (with a package.json)'
+		)
+	}
+
+	// grab the dev dependencies
+	const { devDependencies, dependencies } = packageJSON
+
+	const hasDependency = (dep: string) => Boolean(devDependencies?.[dep] || dependencies?.[dep])
+
+	let frameworkInfo: HoudiniFrameworkInfo = { framework: 'svelte' }
+	if (hasDependency('@sveltejs/kit')) {
+		frameworkInfo = { framework: 'kit' }
+	}
+
+	return {
+		frameworkInfo,
+		module: packageJSON['type'] === 'module' ? 'esm' : 'commonjs',
+	}
+}
+
+type DetectedFromPackageTools = {
+	module: 'esm' | 'commonjs'
+	frameworkInfo: HoudiniFrameworkInfo
 }
 
 export default adapter

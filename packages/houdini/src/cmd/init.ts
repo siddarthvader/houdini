@@ -2,9 +2,9 @@ import * as p from '@clack/prompts'
 import { bold, cyan, gray, green, italic } from 'kleur/colors'
 import { execSync } from 'node:child_process'
 
+import type { ConfigFile } from '../lib/config'
 import { fs, path } from '../lib/index.js'
 import { pull_schema } from '../lib/schema.js'
-import type { ConfigFile } from '../runtime/lib/config'
 
 function pCancel(cancelText = 'Operation cancelled.') {
 	p.cancel(cancelText)
@@ -49,7 +49,9 @@ export async function init(
 	} while (dir !== (dir = path.dirname(dir)))
 
 	if (use_git) {
-		const status = execSync('git status --porcelain', { stdio: 'pipe' }).toString()
+		const status = execSync('git status --porcelain', {
+			stdio: 'pipe',
+		}).toString()
 
 		if (status) {
 			const { confirm } = await p.group(
@@ -275,8 +277,8 @@ export function finale_logs(package_manager: 'npm' | 'yarn' | 'pnpm') {
 		cmd_run = 'yarn dev'
 	}
 	console.log(`👉 Next Steps`)
-	console.log(`1️⃣  Finalize your installation: ${green(cmd_install)}
-2️⃣  Start your application:     ${green(cmd_run)}
+	console.log(`1  Finalize your installation: ${green(cmd_install)}
+2  Start your application:     ${green(cmd_run)}
 `)
 
 	console.log(

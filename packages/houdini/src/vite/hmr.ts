@@ -3,13 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { Plugin as VitePlugin, ModuleNode, HmrContext } from 'vite'
 
 import type { VitePluginContext } from '.'
-import {
-	codegen_setup,
-	get_config,
-	path,
-	run_pipeline,
-	type CompilerProxy,
-} from '../lib/index.js'
+import { codegen_setup, get_config, path, run_pipeline, type CompilerProxy } from '../lib/index.js'
 
 /**
  * Houdini Vite HMR Plugin
@@ -28,6 +22,7 @@ import {
  */
 
 export let compiler: CompilerProxy
+const VIRTUAL_PREFIX = '\0houdini:artifact:'
 
 export function document_hmr(ctx: VitePluginContext): VitePlugin {
 	const debounceHmr = createDebounceHmr(50) // 50ms debounce window
@@ -49,40 +44,13 @@ export function document_hmr(ctx: VitePluginContext): VitePlugin {
 				compiler.close()
 			})
 
-			// before we can do anything we need to discover what documents exist on the filesystem
-			// we need to trigger validate in order to discover lists which might not appear in the normal JIT path
-			// TODO: discover lists earlier
+			// before we do anyting we neeed to make sure everything has run
 			try {
 				await run_pipeline(compiler.trigger_hook, {
 					// the pipeline through schema is run as part of codegen_setup
 					after: 'Schema',
-					through: 'Validate',
 				})
 			} catch {}
-
-			// we also want to generate the initial file contents but skip the rest of the codegen
-			try {
-				await compiler.trigger_hook('GenerateRuntime')
-			} catch {}
-		},
-
-		// this is called when a module is being resolved
-		async resolveId(id) {
-			// check if this is an artifact import
-			if (id.startsWith('$houdini/artifacts/')) {
-				const match = id.match(/^\$houdini\/artifacts\/(.+)$/)
-				const artifactName = match ? match[1] : null
-				if (artifactName && ctx.db && compiler) {
-					try {
-						// ensure the artifact and its dependencies are generated
-						await ensureArtifactGenerated(artifactName, ctx.db, compiler)
-					} catch (error) {
-						console.error(error)
-					}
-				}
-			}
-			// let vite handle the actual resolution
-			return null
 		},
 
 		// this is called when a file is created or modified
@@ -97,15 +65,13 @@ export function document_hmr(ctx: VitePluginContext): VitePlugin {
 						!filepath.includes(
 							path.join(
 								hmr.server.config.root,
-								ctx.config.config_file.runtimeDir ?? '.houdini',
-							),
+								ctx.config.config_file.runtimeDir ?? '.houdini'
+							)
 						) &&
 						(filepath.endsWith('.gql') || content.includes('$houdini'))
 					) {
 						filepaths.push(filepath)
-						relativePaths.push(
-							filepath.substring(hmr.server.config.root.length + 1),
-						)
+						relativePaths.push(filepath.substring(hmr.server.config.root.length + 1))
 					}
 				}
 				if (filepaths.length === 0) {
@@ -121,7 +87,7 @@ export function document_hmr(ctx: VitePluginContext): VitePlugin {
 					.prepare(
 						`
             DELETE from raw_documents WHERE filepath IN (${placeholders})
-        `,
+        `
 					)
 					.run(...relativePaths)
 
@@ -135,7 +101,7 @@ export function document_hmr(ctx: VitePluginContext): VitePlugin {
           WHERE s.fragment_ref IS NOT NULL
             AND s.kind = 'fragment'                              -- only fragment spreads
             AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.name = s.field_name)
-          `,
+          `
 					)
 					.run()
 
@@ -152,7 +118,7 @@ export function document_hmr(ctx: VitePluginContext): VitePlugin {
             )
             DELETE FROM selections
             WHERE id IN (SELECT id FROM orphan_selections)
-          `,
+          `
 					)
 					.run()
 
@@ -168,7 +134,7 @@ export function document_hmr(ctx: VitePluginContext): VitePlugin {
               UPDATE raw_documents 
                 SET current_task = ? 
               WHERE filepath IN (${placeholders})
-            `,
+            `
 					)
 					.run(task_id, ...relativePaths)
 
@@ -247,26 +213,26 @@ export function document_hmr(ctx: VitePluginContext): VitePlugin {
             UPDATE raw_documents
             SET current_task = $task_id
             WHERE id IN (SELECT raw_id FROM targets);
-          `,
+          `
 					)
 					.run({ task_id: task_id })
 
 				// the task now includes every document that we need to process
 				const results = await run_pipeline(compiler.trigger_hook, {
 					task_id,
-					after: 'AfterExtract',
+					after: 'AfterValidate',
 				})
 
 				// the return value of each generate invocation is the list of modules that were updated
 				const updated_modules = Object.values(
-					results.GenerateDocuments || {},
+					results.GenerateDocuments || {}
 				).flat() as Array<string>
+
+				console.log({ updated_modules })
 
 				// and finally we can remove the task id association
 				ctx.db
-					.prepare(
-						`UPDATE raw_documents SET current_task = NULL WHERE current_task = ?`,
-					)
+					.prepare(`UPDATE raw_documents SET current_task = NULL WHERE current_task = ?`)
 					.run(task_id)
 
 				// invalidate all of the modules we generated
@@ -281,112 +247,11 @@ export function document_hmr(ctx: VitePluginContext): VitePlugin {
 	}
 }
 
-/**
- * Ensure that the specified artifact and all its dependencies are generated
- */
-async function ensureArtifactGenerated(
-	artifactName: string,
-	db: DatabaseSync,
-	compiler: CompilerProxy,
-): Promise<void> {
-	// before we do anything let's see if the artifact has been generated already
-	try {
-		const config = await get_config()
-
-		await fs.access(
-			path.join(
-				config.root_dir,
-				config.config_file.runtimeDir ?? '.houdini',
-				'artifacts',
-				artifactName,
-			),
-			fs.constants.R_OK,
-		)
-		// if stat doesn't throw, the file exists
-		return
-	} catch {}
-
-	const timestamp = Date.now()
-	const task_id = `artifact_${artifactName}_${timestamp}`
-
-	// Check if the artifact document exists in the database
-	const documentQuery = db.prepare(`
-		SELECT d.id, d.name, rd.id as raw_document_id
-		FROM documents d
-		LEFT JOIN raw_documents rd ON rd.id = d.raw_document
-		WHERE d.name = ?
-	`)
-	const document = documentQuery.get(artifactName) as
-		| { id: number; name: string; raw_document_id: number | null }
-		| undefined
-
-	// if document doesn't exist, there's nothing to generate
-	if (!document || !document.raw_document_id) {
-		return
-	}
-
-	// mark the document as part of this task
-	db.prepare(`UPDATE raw_documents SET current_task = ? WHERE id = ?`).run(
-		task_id,
-		document.raw_document_id,
-	)
-
-	// Find all dependencies using the same recursive query as handleHotUpdate
-	db.prepare(
-		`
-			WITH RECURSIVE
-			seed AS (
-				SELECT DISTINCT d.name
-				FROM raw_documents rd
-				JOIN documents d ON d.raw_document = rd.id
-				WHERE rd.current_task = $task_id
-			),
-
-			walk AS (
-				SELECT name FROM seed
-				UNION
-				SELECT dd.depends_on
-				FROM down v
-				JOIN documents d          ON d.name = v.name
-				JOIN document_dependencies dd ON dd.document = d.id
-			),
-
-			targets AS (
-				SELECT DISTINCT d.raw_document AS raw_id
-				FROM documents d
-				JOIN walk v        ON v.name = d.name
-				JOIN raw_documents rd ON rd.id = d.raw_document
-				WHERE d.raw_document IS NOT NULL
-			),
-
-			UPDATE raw_documents
-			SET current_task = $task_id
-			WHERE id IN (SELECT raw_id FROM targets);
-		`,
-	).run({ task_id: task_id })
-
-	// Run the compilation pipeline for this task
-	await run_pipeline(compiler.trigger_hook, {
-		task_id,
-		after: 'AfterExtract',
-	})
-
-	// Clean up the task
-	db.prepare(
-		`UPDATE raw_documents SET current_task = NULL WHERE current_task = ?`,
-	).run(task_id)
-}
-
 type BatchCallback = (
 	filesWithContent: Record<string, string>,
-	batchId: string,
+	batchId: string
 ) => void | Promise<void>
 
-/**
- * Creates a debounced HMR handler that batches file changes
- * @param debounceMs - Debounce window in milliseconds
- * @returns debounceHmr function
- */
 export function createDebounceHmr(debounceMs: number = 50) {
 	const updateQueue = new Map<string, () => string | Promise<string>>()
 	let updateTimer: NodeJS.Timeout | null = null
@@ -425,8 +290,8 @@ export function createDebounceHmr(debounceMs: number = 50) {
 			try {
 				// Read all files in parallel
 				const filesWithContent: Record<string, string> = {}
-				const readPromises = Array.from(filesToProcess.entries()).map(
-					async ([filepath, readFn]) => {
+				await Promise.all(
+					Array.from(filesToProcess.entries()).map(async ([filepath, readFn]) => {
 						try {
 							const content = await readFn()
 							filesWithContent[filepath] = content
@@ -434,10 +299,8 @@ export function createDebounceHmr(debounceMs: number = 50) {
 							// Store empty string or rethrow based on your needs
 							filesWithContent[filepath] = ''
 						}
-					},
+					})
 				)
-
-				await Promise.all(readPromises)
 
 				try {
 					await callback(filesWithContent, currentBatchId.toString())
@@ -458,7 +321,7 @@ export function createDebounceHmr(debounceMs: number = 50) {
 							} catch (error) {
 								nextFilesWithContent[filepath] = ''
 							}
-						},
+						}
 					)
 
 					await Promise.all(nextReadPromises)

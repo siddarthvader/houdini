@@ -3,12 +3,12 @@ package schema
 import (
 	"context"
 	"fmt"
-	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
-	"code.houdinigraphql.com/packages/houdini-core/plugin/documents/typescript"
+	"code.houdinigraphql.com/packages/houdini-core/plugin/documents/artifacts/typescript"
 	"code.houdinigraphql.com/plugins"
 	"github.com/spf13/afero"
 	"zombiezen.com/go/sqlite"
@@ -128,7 +128,7 @@ func generateInputTypeDefinitions(
 			if i > 0 {
 				finalContent.WriteString(", ")
 			}
-			finalContent.WriteString(enumName)
+			finalContent.WriteString(enumName + "$options")
 		}
 		finalContent.WriteString(" } from './enums.js';\n\n")
 	}
@@ -140,7 +140,11 @@ func generateInputTypeDefinitions(
 	finalContent.WriteString(content.String())
 
 	// write the content to the file
-	targetPath := path.Join(config.DefinitionsDirectory(), "inputs.d.ts")
+	err = fs.MkdirAll(config.DefinitionsDirectory(), 0o755)
+	if err != nil {
+		return err
+	}
+	targetPath := filepath.Join(config.DefinitionsDirectory(), "inputs.ts")
 	return afero.WriteFile(fs, targetPath, []byte(finalContent.String()), 0o644)
 }
 

@@ -2,7 +2,7 @@ package runtime_test
 
 import (
 	"context"
-	"path"
+	"path/filepath"
 	"testing"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
@@ -13,7 +13,7 @@ import (
 )
 
 func TestGenerateImperativeCacheTypeDefs(t *testing.T) {
-	tests.RunTable(t, tests.Table[config.PluginConfig]{
+	tests.RunTable(t, tests.Table[config.PluginConfig, *plugin.HoudiniCore]{
 		Schema: `
 			enum MyEnum {
 				Hello
@@ -332,12 +332,13 @@ func TestGenerateImperativeCacheTypeDefs(t *testing.T) {
 								};
 						};
 						queries: [[any, TestQuery$result, TestQuery$input], [any, TestQueryNoArgs$result, TestQueryNoArgs$input]];
+						scalars: number | boolean | string
 				};
 			`)
 
 			contents, err := afero.ReadFile(
 				plugin.Fs,
-				path.Join(config.ProjectRoot, config.RuntimeDir, "generated.d.ts"),
+				filepath.Join(config.ProjectRoot, config.RuntimeDir, "runtime", "generated.ts"),
 			)
 			require.NoError(t, err)
 			require.Equal(t, expected, contents)

@@ -36,18 +36,38 @@ func InsertOperationDocuments(
 	insertedDirectives := map[string]bool{}
 
 	// we need a query that copys the subselection for the list field
-	// into a document
+	// into a document - this finds all descendants and copies them preserving relationships
+	// The key insight: we're only creating new refs, not new selections, so parent_id relationships should be preserved
 	copySelection, err := conn.Prepare(`
-		INSERT
-			INTO selection_refs (document, child_id, row, column, path_index, internal)
+		WITH RECURSIVE subtree AS (
+			-- Start with the selection parent itself
+			SELECT $selection_parent as selection_id
+
+			UNION ALL
+
+			-- Add all descendants recursively
+			SELECT sr.child_id
+			FROM selection_refs sr
+			JOIN subtree st ON sr.parent_id = st.selection_id
+		)
+		-- Copy all selection references where both parent and child are in our subtree
+		-- BUT exclude the selection_parent itself - we only want its children
+		INSERT INTO selection_refs (document, parent_id, child_id, row, column, path_index, internal)
 		SELECT
 			$document AS document,
-			child_id,
-			row,
-			column,
-			path_index,
-			internal
-		FROM selection_refs WHERE parent_id = $selection_parent
+			CASE
+				WHEN sr.parent_id = $selection_parent THEN NULL  -- Direct children of selection_parent become roots
+				ELSE sr.parent_id
+			END as parent_id,
+			sr.child_id,
+			sr.row,
+			sr.column,
+			sr.path_index,
+			sr.internal
+		FROM selection_refs sr
+		WHERE sr.parent_id IN (SELECT selection_id FROM subtree)
+		  AND sr.child_id IN (SELECT selection_id FROM subtree)
+		  AND sr.child_id != $selection_parent  -- Exclude the selection_parent itself
 	`)
 	if err != nil {
 		return commit(plugins.WrapError(err))
@@ -127,16 +147,34 @@ func InsertOperationDocuments(
 	defer insertArgumentValueChildren.Finalize()
 
 	insertDocument, err := conn.Prepare(
-		"INSERT INTO documents (name, raw_document, kind, type_condition) VALUES ($name, $raw_document, $kind, $type_condition)",
+		`
+			INSERT INTO documents 
+				(name, raw_document, kind, type_condition, internal, visible)
+			VALUES 
+				($name, $raw_document, $kind, $type_condition, true, false)
+		`,
 	)
 	if err != nil {
 		return commit(plugins.WrapError(err))
 	}
 	defer insertDocument.Finalize()
 
+	insertDocumentDependency, err := conn.Prepare(
+		`
+			INSERT INTO document_dependencies
+				(document, depends_on)
+			VALUES 
+				($document, $depends_on)
+		`,
+	)
+	if err != nil {
+		return commit(plugins.WrapError(err))
+	}
+	defer insertDocumentDependency.Finalize()
+
 	// a statement to insert internal directives
 	insertInternalDirectiveStmt, err := conn.Prepare(
-		"INSERT INTO directives (name, description, internal, visible) VALUES ($name, $description, true, true)",
+		"INSERT INTO directives (name, description, internal, visible) VALUES ($name, $description, true, true)ON CONFLICT (name) DO NOTHING",
 	)
 	if err != nil {
 		return commit(plugins.WrapError(err))
@@ -164,36 +202,48 @@ func InsertOperationDocuments(
 	// now we can step through each discovered list and insert the necessary documents
 	errs := &plugins.ErrorList{}
 	searchLists, err := conn.Prepare(`
-		SELECT 
-      discovered_lists.name, 
-      discovered_lists.node_type, 
-      discovered_lists.node, 
-      discovered_lists.raw_document, 
-      documents.id as document_id,
-      CASE 
-        WHEN document_variables.id IS NULL THEN json('[]')
-        ELSE json_group_array(
-          json_object(
-            'name', document_variables.name,
-            'type', document_variables.type,
-            'type_modifiers', document_variables.type_modifiers
-          )
-        )
-      END as document_arguments
+		SELECT
+					discovered_lists.name,
+					discovered_lists.node_type,
+					discovered_lists.node,
+					discovered_lists.document,
+					documents.id as document_id,
+					documents.raw_document,
+					CASE
+						WHEN document_variables.id IS NULL THEN json('[]')
+						ELSE json_group_array(
+							json_object(
+								'name', document_variables.name,
+								'type', document_variables.type,
+								'type_modifiers', document_variables.type_modifiers
+							)
+						)
+					END as document_arguments,
+				documents.name as document_name
 		FROM discovered_lists
-			JOIN raw_documents ON raw_documents.id = discovered_lists.raw_document
-      JOIN documents ON documents.raw_document = raw_documents.id
-      LEFT JOIN document_variables ON document_variables.document = documents.id
-		WHERE raw_documents.current_task = $task_id OR $task_id IS NULL
-    GROUP BY discovered_lists.name
+			JOIN documents ON documents.id = discovered_lists.document AND documents.kind != 'fragment'
+			JOIN raw_documents ON raw_documents.id = documents.raw_document
+			LEFT JOIN document_variables ON document_variables.document = documents.id
+			LEFT JOIN documents operations ON operations.name = discovered_lists.name || $toggle_suffix
+		WHERE 
+			discovered_lists.name IS NOT '' and discovered_lists.name IS NOT NULL 
+			AND operations.id IS NULL 
+			AND (raw_documents.current_task = $task_id OR $task_id IS NULL)
+		GROUP BY discovered_lists.name
 	`)
 	if err != nil {
 		return commit(plugins.WrapError(err))
 	}
 	defer searchLists.Finalize()
+	err = db.BindStatement(searchLists, map[string]any{
+		"toggle_suffix": graphql.ListOperationSuffixToggle,
+	})
+	if err != nil {
+		return commit(plugins.WrapError(err))
+	}
 
 	insertDocumentArgument, err := conn.Prepare(`
-    INSERT INTO document_variables (document, name, type, row, column, type_modifiers)
+    INSERT OR IGNORE INTO document_variables (document, name, type, row, column, type_modifiers)
     VALUES ($document, $name, $type, 0, 0, $type_modifiers)
   `)
 	if err != nil {
@@ -205,9 +255,10 @@ func InsertOperationDocuments(
 		name := searchLists.ColumnText(0)
 		listType := searchLists.ColumnText(1)
 		selectionParent := searchLists.ColumnInt64(2)
-		rawDocument := searchLists.ColumnInt64(3)
 		documentID := searchLists.GetInt64("document_id")
+		rawDocument := searchLists.GetInt64("raw_document")
 		documentArgmentsString := searchLists.GetText("document_arguments")
+		documentName := searchLists.GetText("document_name")
 
 		arguments := []struct {
 			Name          string `json:"name"`
@@ -247,6 +298,16 @@ func InsertOperationDocuments(
 			fragmentID := conn.LastInsertRowID()
 			copyTargets = append(copyTargets, fragmentID)
 
+			// insert the document dependency
+			err = db.ExecStatement(insertDocumentDependency, map[string]any{
+				"document":   fragmentID,
+				"depends_on": documentName,
+			})
+			if err != nil {
+				errs.Append(plugins.WrapError(err))
+				return
+			}
+
 			// copy the selection from the selection parent to the new document
 			err = db.ExecStatement(copySelection, map[string]any{
 				"document":         fragmentID,
@@ -264,6 +325,10 @@ func InsertOperationDocuments(
 					"type_modifiers": arg.TypeModifiers,
 					"document":       fragmentID,
 				})
+				if err != nil {
+					errs.Append(plugins.WrapError(err))
+					return
+				}
 			}
 		}
 
@@ -378,28 +443,45 @@ func InsertOperationDocuments(
 	if err != nil {
 		return err
 	}
+
 	// we'll insert delete directive and remove fragment driven by a separate query
 	statementWithKeys, err := conn.Prepare(`
-		WITH lists AS (
-			select * from discovered_lists
-			JOIN raw_documents on discovered_lists.raw_document = raw_documents.id
-			WHERE raw_documents.current_task = $task_id or $task_id is NULL
-		)
-
-		SELECT lists.name, lists.node_type, tc.keys, lists.raw_document
-		FROM lists
-		LEFT JOIN type_configs tc ON tc.name = lists.node_type
+		SELECT
+			dl.id,
+			dl.name,
+			dl.node_type,
+			MIN(tc.keys)                  AS keys,
+			rd.id                         AS raw_document,
+			MIN(op_doc.name)              AS document_name
+		FROM discovered_lists dl
+		JOIN documents doc        ON dl.document     = doc.id
+		JOIN raw_documents rd     ON doc.raw_document = rd.id
+		LEFT JOIN type_configs tc ON tc.name = dl.node_type
+		LEFT JOIN documents op_doc ON op_doc.name = dl.name || $remove_suffix
+		WHERE dl.name IS NOT '' AND dl.name IS NOT NULL
+			AND op_doc.id IS NULL
+			AND (rd.current_task = $task_id OR $task_id IS NULL)
+			AND (doc.processed = false OR doc.processed IS NULL)
+		GROUP BY
+			dl.name, dl.node_type, rd.id
 	`)
 	if err != nil {
 		return commit(plugins.WrapError(err))
 	}
 	defer statementWithKeys.Finalize()
+	err = db.BindStatement(statementWithKeys, map[string]any{
+		"remove_suffix": graphql.ListOperationSuffixRemove,
+	})
+	if err != nil {
+		return commit(plugins.WrapError(err))
+	}
 
 	err = db.StepStatement(ctx, statementWithKeys, func() {
 		listName := statementWithKeys.GetText("name")
 		typeName := statementWithKeys.GetText("node_type")
 		keysStr := statementWithKeys.GetText("keys")
 		rawDocument := statementWithKeys.GetText("raw_document")
+		documentName := statementWithKeys.GetText("document_name")
 
 		keys := []string{}
 		if keysStr != "" {
@@ -443,8 +525,20 @@ func InsertOperationDocuments(
 
 			fragmentID := conn.LastInsertRowID()
 
+			// insert the document dependency
+			err = db.ExecStatement(insertDocumentDependency, map[string]any{
+				"document":   fragmentID,
+				"depends_on": documentName,
+			})
+			if err != nil {
+				errs.Append(plugins.WrapError(err))
+				return
+			}
+
 			// now we need a selection for each key and a ref that links it up to the parent
-			for _, key := range append(keys, "__typename") {
+			allKeys := append(keys, "__typename")
+
+			for _, key := range allKeys {
 				// insert the selection row
 				err = db.ExecStatement(insertSelection, map[string]any{
 					"field_name": key,

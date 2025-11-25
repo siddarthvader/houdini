@@ -1,8 +1,8 @@
 <script lang="ts">
   import { CachePolicy } from '$houdini';
   import { page } from '$app/stores';
-  import { stry } from '../../../lib/utils/helpers.js';
-  import type { PageData } from './$houdini';
+  import { stringify } from '$lib/utils/stringify';
+  import type { PageData } from './$types';
 
   export let data: PageData;
 
@@ -34,7 +34,7 @@
   <p>Loading...</p>
 {:else if $User.errors}
   <pre>
-    {stry($User.errors)}
+    {stringify($User.errors)}
   </pre>
 {:else}
   <div id="result">

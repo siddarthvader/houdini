@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -24,17 +23,15 @@ func GenerateRuntimeIndexFile(
 	}
 
 	// we are going to populate the runtime index
-	indexPath := path.Join(config.ProjectRoot, config.RuntimeDir, "index.js")
-	dTsPath := path.Join(config.ProjectRoot, config.RuntimeDir, "index.d.ts")
+	indexPath := filepath.Join(config.ProjectRoot, config.RuntimeDir, "index.ts")
 
-	// delete both of the files to start fresh
 	_ = fs.Remove(indexPath)
-	_ = fs.Remove(dTsPath)
 
 	definitionsRelative, err := filepath.Rel(config.RuntimeDir, config.DefinitionsDirectory())
 	if err != nil {
 		return err
 	}
+	definitionsRelative = filepath.ToSlash(definitionsRelative)
 
 	// before we doing any kind of file io let's determine the value we will write so we can compare with the existing value to know if we changed anything
 
@@ -50,7 +47,7 @@ func GenerateRuntimeIndexFile(
 			name 
 		FROM documents 
 		JOIN raw_documents ON documents.raw_document = raw_documents.id
-		WHERE printed IS NOT NULL
+		WHERE printed IS NOT NULL and internal = 0 
 		ORDER BY name ASC
 	`)
 	if err != nil {
@@ -60,15 +57,10 @@ func GenerateRuntimeIndexFile(
 
 	// generate an export for every document
 	indexDocs := []string{}
-	dTsDocs := []string{}
 	err = db.StepStatement(ctx, documentSearch, func() {
 		name := documentSearch.GetText("name")
 		indexDocs = append(
 			indexDocs,
-			fmt.Sprintf("export { default as %s } from './artifacts/%s.js'", name, name),
-		)
-		dTsDocs = append(
-			dTsDocs,
 			fmt.Sprintf("export * from './artifacts/%s'", name),
 		)
 	})
@@ -87,6 +79,12 @@ func GenerateRuntimeIndexFile(
 	runtimeExport := []string{}
 	err = db.StepStatement(ctx, pluginSearch, func() {
 		name := pluginSearch.GetText("name")
+		// the core runtime goes somewhere special so we dont need ot generate imports for it
+		if name == "houdini-core" {
+			return
+		}
+
+		// make sure the runtime exports the plugin runtime
 		runtimeExport = append(
 			runtimeExport,
 			fmt.Sprintf("export * from './plugins/%s/runtime'", name),
@@ -110,23 +108,6 @@ export * from './%s'
 
 	// if we got this far then we need to update the file
 	err = afero.WriteFile(fs, indexPath, []byte(indexContent), 0644)
-	if err != nil {
-		return err
-	}
-
-	dTsContent := fmt.Sprintf(`export * from './runtime/client'
-export * from './runtime'
-export * from './%s'
-%s
-%s
-`,
-		definitionsRelative,
-		strings.Join(runtimeExport, "\n"),
-		strings.Join(dTsDocs, "\n"),
-	)
-
-	// if we got this far then we need to update the file
-	err = afero.WriteFile(fs, dTsPath, []byte(dTsContent), 0644)
 	if err != nil {
 		return err
 	}

@@ -10,9 +10,16 @@ import { document_hmr } from './hmr.js'
 import { houdini } from './houdini.js'
 import { poll_remote_schema, watch_local_schema, refresh_on_schema } from './schema.js'
 
-export type PluginConfig = { configPath?: string; adapter?: Adapter } & Partial<ConfigFile>
+export type PluginConfig = {
+	configPath?: string
+	adapter?: Adapter
+} & Partial<ConfigFile>
 
-export type VitePluginContext = PluginConfig & { db: DatabaseSync; db_file: string; config: Config }
+export type VitePluginContext = PluginConfig & {
+	db: DatabaseSync
+	db_file: string
+	config: Config
+}
 
 export default async function (opts?: PluginConfig): Promise<Array<PluginOption>> {
 	// load the current config
@@ -102,6 +109,12 @@ async function load_vite_plugins(ctx: VitePluginContext): Promise<Array<PluginOp
 
 						pluginModule = await import(viteFileUrl)
 					} catch (resolveError) {
+						console.log(
+							'skipping plugin',
+							plugin.name,
+							'due to resolution error:',
+							resolveError
+						)
 						// if resolution fails, skip this plugin
 						return null
 					}

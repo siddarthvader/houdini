@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -42,7 +42,7 @@ func TestComponentFields(t *testing.T) {
 	require.Nil(t, err)
 
 	// write the schema to the database
-	err = tests.WriteHoudiniSchema(conn)
+	err = tests.WriteDatabaseSchema(conn)
 	require.Nil(t, err)
 	defer db.Put(conn)
 
@@ -167,9 +167,8 @@ func TestComponentFieldChecks(t *testing.T) {
 				t.Fatalf("failed to create in-memory db: %v", err)
 			}
 			defer db.Close()
-			plugin := &plugin.HoudiniCore{
-				Fs: afero.NewMemMapFs(),
-			}
+			plugin := &plugin.HoudiniCore{}
+			plugin.SetFilesystem(afero.NewMemMapFs())
 
 			db.SetProjectConfig(plugins.ProjectConfig{
 				ProjectRoot: "/project",
@@ -180,7 +179,7 @@ func TestComponentFieldChecks(t *testing.T) {
 			// Use an in-memory file system.
 			afero.WriteFile(
 				plugin.Fs,
-				path.Join("/project", "schema.graphql"),
+				filepath.Join("/project", "schema.graphql"),
 				[]byte(schema),
 				0644,
 			)
@@ -191,7 +190,7 @@ func TestComponentFieldChecks(t *testing.T) {
 
 			require.Nil(t, err)
 			// write the internal schema to the database
-			err = tests.WriteHoudiniSchema(conn)
+			err = tests.WriteDatabaseSchema(conn)
 			require.Nil(t, err)
 
 			// wire up the plugin

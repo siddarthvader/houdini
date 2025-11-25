@@ -1,6 +1,7 @@
+import type { ConfigFile } from 'houdini'
+
 import config from '../imports/config'
 import pluginConfigs from '../imports/pluginConfig'
-import type { ConfigFile } from '../lib/types'
 
 let mockConfig: ConfigFile | null = null
 
@@ -80,4 +81,3 @@ export function getCurrentConfig(): ConfigFile {
 	// we're done
 	return configFile
 }
-

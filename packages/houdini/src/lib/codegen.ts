@@ -2,13 +2,13 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import path from 'node:path'
 import sqlite, { type DatabaseSync } from 'node:sqlite'
 
-import type { ProjectManifest } from '../runtime'
+import type { Config } from './config.js'
 import { db_path, houdini_root } from './conventions.js'
 import type * as routerConventions from './conventions.js'
 import { create_schema, write_config } from './database.js'
 import { format_hook_error, type HookError } from './error.js'
 import * as fs from './fs.js'
-import type { Config } from './project.js'
+import type { ProjectManifest } from './types'
 
 export type PluginSpec = {
 	name: string
@@ -27,9 +27,7 @@ export type Adapter = ((args: {
 	manifest: ProjectManifest
 	adapterPath: string
 }) => void | Promise<void>) & {
-	includePaths?:
-		| Record<string, string>
-		| ((args: { config: Config }) => Record<string, string>)
+	includePaths?: Record<string, string> | ((args: { config: Config }) => Record<string, string>)
 	disableServer?: boolean
 	pre?: (args: {
 		config: Config
@@ -57,18 +55,21 @@ export function connect_db(config: Config): [DatabaseSync, string] {
 	return [db, filepath]
 }
 
-export async function init_db(config: Config): Promise<[DatabaseSync, string]> {
-	// we need to create a fresh database for orchestration
+export async function init_db(config: Config, preserve: boolean): Promise<[DatabaseSync, string]> {
 	const db_file = db_path(config)
-	try {
-		await fs.remove(db_file)
-	} catch (e) {}
-	try {
-		await fs.remove(`${db_file}-shm`)
-	} catch (e) {}
-	try {
-		await fs.remove(`${db_file}-wal`)
-	} catch (e) {}
+
+	// we need to create a fresh database for orchestration
+	if (!preserve) {
+		try {
+			await fs.remove(db_file)
+		} catch (e) {}
+		try {
+			await fs.remove(`${db_file}-shm`)
+		} catch (e) {}
+		try {
+			await fs.remove(`${db_file}-wal`)
+		} catch (e) {}
+	}
 	return [connect_db(config)[0], db_file]
 }
 
@@ -76,7 +77,7 @@ export type CompilerProxy = {
 	close: () => Promise<void>
 	trigger_hook: (
 		name: PipelineHook,
-		opts?: { parallel_safe?: boolean; payload?: {}; task_id?: string },
+		opts?: { parallel_safe?: boolean; payload?: {}; task_id?: string }
 	) => Promise<Record<string, any> | null>
 	database_path: string
 }
@@ -87,7 +88,7 @@ export async function codegen_setup(
 	config: Config,
 	mode: string,
 	db: DatabaseSync,
-	db_file: string,
+	db_file: string
 ): Promise<CompilerProxy> {
 	// We need the root dir before we get to the exciting stuff
 	await fs.mkdirpSync(houdini_root(config))
@@ -95,7 +96,8 @@ export async function codegen_setup(
 	const plugins: Record<string, PluginSpec & { process: ChildProcess }> = {}
 
 	// when plugins announce themselves, they provide a port
-	const plugin_specs: Record<string, PluginSpec> = {}
+	const plugin_specs: Array<PluginSpec> = []
+	const spec_results: Record<string, PluginSpec> = {}
 
 	// we need a function that waits for a plugin to register itself
 	const wait_for_plugin = (name: string) =>
@@ -119,10 +121,8 @@ export async function codegen_setup(
 
 					// update the plugin spec with the user provided config
 					db.prepare('UPDATE plugins set config = ? where name = ?').run(
-						JSON.stringify(
-							config.plugins.find((p) => p.name === name)?.config ?? {},
-						),
-						name,
+						JSON.stringify(config.plugins.find((p) => p.name === name)?.config ?? {}),
+						name
 					)
 
 					// create the plugin spec
@@ -131,12 +131,11 @@ export async function codegen_setup(
 						port: row.port,
 						hooks: new Set(JSON.parse(row.hooks)),
 						order: row.plugin_order as 'before' | 'after' | 'core',
-						directory:
-							config.plugins.find((p) => p.name === name)?.directory || '',
+						directory: config.plugins.find((p) => p.name === name)?.directory || '',
 					}
 
 					// store the spec
-					plugin_specs[name] = spec
+					spec_results[name] = spec
 
 					// if the row specifies a config module then we need to import it and invoke it
 					if (row.config_module) {
@@ -197,31 +196,37 @@ export async function codegen_setup(
 				...(await wait_for_plugin(plugin.name)),
 			}
 			console.timeEnd(`Spawn ${plugin.name}`)
-		}),
+		})
 	)
+
+	for (const plugin of config.plugins) {
+		plugin_specs.push(spec_results[plugin.name])
+	}
+
 	console.timeEnd('Start Plugins')
 
 	const invoke_hook = async (
 		name: string,
 		hook: string,
 		payload: Record<string, any> = {},
-		task_id?: string,
+		task_id?: string
 	) => {
-		const { port, directory } = plugin_specs[name]
+		const plugin = plugin_specs.find((spec) => spec.name === name)
+		if (!plugin) {
+			throw new Error(`unknkown plugin: ${name}`)
+		}
+		const { port, directory } = plugin
 
 		// make the request
-		const response = await fetch(
-			`http://localhost:${port}/${hook.toLowerCase()}`,
-			{
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					'X-Task-ID': task_id?.toString() ?? '',
-					'X-Plugin-Directory': directory,
-				},
-				body: JSON.stringify(payload),
+		const response = await fetch(`http://localhost:${port}/${hook.toLowerCase()}`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Task-ID': task_id?.toString() ?? '',
+				'X-Plugin-Directory': directory,
 			},
-		)
+			body: JSON.stringify(payload),
+		})
 
 		// if the request failed, throw an error
 		if (!response.ok) {
@@ -229,11 +234,9 @@ export async function codegen_setup(
 				throw new Error(`Plugin ${name} does not support hook ${hook}`)
 			}
 			const responseJSON = await response.json()
-			const errors: HookError[] = Array.isArray(responseJSON)
-				? responseJSON
-				: [responseJSON]
+			const errors: HookError[] = Array.isArray(responseJSON) ? responseJSON : [responseJSON]
 			errors.forEach((error) => {
-				format_hook_error(config.root_dir, error, name)
+				format_hook_error(config.root_dir, error, name, hook)
 			})
 			// errors
 			throw new Error(`Failed to call ${name}/${hook.toLowerCase()}`)
@@ -256,27 +259,25 @@ export async function codegen_setup(
 			parallel_safe?: boolean
 			payload?: Record<string, any>
 			task_id?: string
-		} = {},
+		} = {}
 	) => {
 		const timeName = hook + (task_id ? ` (${task_id})` : '')
 		console.time(timeName)
 		// look for all of the plugins that have registered for this hook
-		const plugins = Object.entries(plugin_specs).filter(([, { hooks }]) =>
-			hooks.has(hook),
-		)
+		const plugins = plugin_specs.filter(({ hooks }) => hooks.has(hook))
 
 		const result: Record<string, any> = {}
 
 		// if the hook is parallel safe, we can run all of the plugins in parallel
 		if (parallel_safe) {
 			await Promise.all(
-				plugins.map(async ([plugin]) => {
-					result[plugin] = await invoke_hook(plugin, hook, payload, task_id)
-				}),
+				plugins.map(async (plugin) => {
+					result[plugin.name] = await invoke_hook(plugin.name, hook, payload, task_id)
+				})
 			)
 		} else {
 			// if the hook isn't parallel safe, we need to run the plugins in order
-			for (const [name] of plugins) {
+			for (const { name } of plugins) {
 				result[name] = await invoke_hook(name, hook, payload, task_id)
 			}
 		}
@@ -330,7 +331,7 @@ export async function codegen_setup(
 							} catch (err) {}
 						}
 					}
-				}),
+				})
 			)
 		},
 	}
@@ -363,7 +364,7 @@ export type RunPipelineOptions = {
 
 export async function run_pipeline(
 	trigger_hook: CompilerProxy['trigger_hook'],
-	options: RunPipelineOptions = {},
+	options: RunPipelineOptions = {}
 ): Promise<Record<PipelineHook, Record<string, any>>> {
 	const { task_id, after, start, through } = options
 	const results: Record<string, any> = {}
@@ -405,11 +406,7 @@ export async function run_pipeline(
 		const opts: any = { task_id }
 
 		// Set parallel_safe for hooks that support it
-		if (
-			hook === 'Validate' ||
-			hook === 'GenerateDocuments' ||
-			hook === 'GenerateRuntime'
-		) {
+		if (hook === 'Validate' || hook === 'GenerateDocuments') {
 			opts.parallel_safe = true
 		}
 

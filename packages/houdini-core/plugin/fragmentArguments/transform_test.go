@@ -13,7 +13,7 @@ import (
 )
 
 func TestFragmentArgumentTransform(t *testing.T) {
-	tests.RunTable(t, tests.Table[config.PluginConfig]{
+	tests.RunTable(t, tests.Table[config.PluginConfig, *plugin.HoudiniCore]{
 		Schema: `
       type Query {
         user: User!
@@ -67,7 +67,11 @@ func TestFragmentArgumentTransform(t *testing.T) {
               id
               __typename
             }
-          `),
+          `).WithVariables(tests.ExpectedOperationVariable{
+						Name:          "name",
+						Type:          "String",
+						TypeModifiers: "!",
+					}),
 				},
 			},
 			{
@@ -369,7 +373,7 @@ func TestFragmentArgumentTransform(t *testing.T) {
 }
 
 func TestFragmentArgumentTransform_multipleRuns(t *testing.T) {
-	tests.RunTable(t, tests.Table[config.PluginConfig]{
+	tests.RunTable(t, tests.Table[config.PluginConfig, *plugin.HoudiniCore]{
 		Schema: `
       type Query {
         user: User!
@@ -406,7 +410,7 @@ func TestFragmentArgumentTransform_multipleRuns(t *testing.T) {
 		},
 		Tests: []tests.Test[config.PluginConfig]{
 			{
-				Name: "Threads query arguments onto fragment",
+				Name: "Multiple runs",
 				Pass: true,
 				Input: []string{
 					`
@@ -445,7 +449,13 @@ func TestFragmentArgumentTransform_multipleRuns(t *testing.T) {
               id
               __typename
             }
-          `),
+          `).WithVariables(
+						tests.ExpectedOperationVariable{
+							Name:          "name",
+							Type:          "String",
+							TypeModifiers: "!",
+						},
+					),
 				},
 			},
 		},

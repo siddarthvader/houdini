@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,13 +11,12 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-var _pluginName string
-
 type DatabasePool[PluginConfig any] struct {
 	_config       *ProjectConfig
 	_pluginConfig *PluginConfig
 	*sqlitex.Pool
-	Test bool
+	PluginName string
+	Test       bool
 }
 
 func (db *DatabasePool[PluginConfig]) SetProjectConfig(config ProjectConfig) {
@@ -90,6 +90,12 @@ func (db DatabasePool[PluginConfig]) BindStatement(stmt *sqlite.Stmt, args map[s
 			stmt.SetNull("$" + key)
 		case bool:
 			stmt.SetBool("$"+key, val)
+		case []string:
+			str, err := json.Marshal(val)
+			if err != nil {
+				return err
+			}
+			stmt.SetText("$"+key, string(str))
 		default:
 			return fmt.Errorf("unsupported type: %T", arg)
 		}
@@ -125,6 +131,29 @@ func (db DatabasePool[PluginConfig]) Take(ctx context.Context) (*sqlite.Conn, er
 	}
 
 	return conn, nil
+}
+
+func (db DatabasePool[PluginConfig]) ExecQuery(
+	ctx context.Context,
+	query string,
+	args map[string]any,
+) error {
+	conn, err := db.Take(ctx)
+	if err != nil {
+		return &Error{
+			Message: "could not open connection to database",
+			Detail:  err.Error(),
+		}
+	}
+	defer db.Put(conn)
+	stmt, err := conn.Prepare(query)
+	if err != nil {
+		return &Error{
+			Message: fmt.Sprintf("could not prepare query: %v", err),
+		}
+	}
+	defer stmt.Finalize()
+	return db.ExecStatement(stmt, args)
 }
 
 // StepQuery wraps the common steps for executing a query.
@@ -175,7 +204,7 @@ func bindTaskID(ctx context.Context, statement *sqlite.Stmt) {
 	if taskID != nil {
 		for i := range statement.BindParamCount() {
 			if statement.BindParamName(i+1) == "$task_id" {
-				statement.SetInt64("$task_id", *taskID)
+				statement.SetText("$task_id", *taskID)
 				break
 			}
 		}

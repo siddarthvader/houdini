@@ -1,7 +1,7 @@
+import { type Config } from './config.js'
 import { houdini_mode } from './constants.js'
 import * as fs from './fs.js'
 import * as path from './path.js'
-import { type Config } from './project.js'
 
 /** The location of the project's router */
 export function router_path(config: Config) {
@@ -169,7 +169,7 @@ function root_plugin_dir(config: Config) {
 	return houdini_mode.is_testing ? '../../../' : path.join(houdini_root(config), 'plugins')
 }
 
-function plugin_dir(config: Config, name: string) {
+export function plugin_dir(config: Config, name: string) {
 	return path.join(root_plugin_dir(config), name)
 }
 
