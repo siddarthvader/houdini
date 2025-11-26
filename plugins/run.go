@@ -15,8 +15,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"zombiezen.com/go/sqlite/sqlitex"
-
-	"code.houdinigraphql.com/packages/houdini-core/config"
 )
 
 var (
@@ -35,7 +33,7 @@ func ParseFlags() {
 	}
 }
 
-func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
+func Run[PluginConfig any](plugin HoudiniPlugin[PluginConfig]) error {
 	ParseFlags()
 
 	// create context that we'll cancel on shutdown signal
@@ -43,13 +41,13 @@ func Run(plugin HoudiniPlugin[config.PluginConfig]) error {
 	defer cancel()
 
 	// connect to the database
-	db, err := NewPool[config.PluginConfig]()
+	db, err := NewPool[PluginConfig]()
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	_pluginName = plugin.Name()
+	db.PluginName = plugin.Name()
 
 	// If the plugin supports injection, set its DB.
 	plugin.SetDatabase(db)

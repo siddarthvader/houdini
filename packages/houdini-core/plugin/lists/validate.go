@@ -20,21 +20,21 @@ func ValidateConflictingPrependAppend(
 ) {
 	query := `
 	SELECT
-	  rd.filepath,
-	  rd.offset_line,
-	  rd.offset_column,
-	  sd.row as line,
-	  sd.column,
-	  d.name AS documentName,
-	  GROUP_CONCAT(DISTINCT sd.directive) AS directives
-	FROM selection_directives sd
-	  JOIN selection_refs sr ON sr.child_id = sd.selection_id
-	  JOIN documents d ON d.id = sr.document
-	  JOIN raw_documents rd ON rd.id = d.raw_document
-	WHERE sd.directive IN ($prepend, $append)
-		AND (rd.current_task = $task_id OR $task_id IS NULL)
-	GROUP BY sd.selection_id, rd.filepath, rd.offset_line, rd.offset_column, d.name
-	HAVING COUNT(DISTINCT sd.directive) > 1
+	  raw_documents.filepath,
+	  raw_documents.offset_line,
+	  raw_documents.offset_column,
+	  selection_directives.row as line,
+	  selection_directives.column,
+	  documents.name AS documentName,
+	  GROUP_CONCAT(DISTINCT selection_directives.directive) AS directives
+	FROM selection_directives
+	  JOIN selection_refs ON selection_refs.child_id = selection_directives.selection_id
+	  JOIN documents ON documents.id = selection_refs.document
+	  JOIN raw_documents ON raw_documents.id = documents.raw_document
+	WHERE selection_directives.directive IN ($prepend, $append)
+		AND (raw_documents.current_task = $task_id OR $task_id IS NULL)
+	GROUP BY selection_directives.selection_id, raw_documents.filepath, raw_documents.offset_line, raw_documents.offset_column, documents.name
+	HAVING COUNT(DISTINCT selection_directives.directive) > 1
 	`
 	bindings := map[string]any{
 		"prepend": graphql.PrependDirective,
@@ -471,7 +471,7 @@ func DiscoverListsThenValidate(
             raw_documents.filepath  AS filepath,
             selections.id           AS selection_id,
             selection_directives.directive,
-            raw_documents.id        AS raw_document_id,
+            documents.id            AS document_id,
             CAST(COALESCE(document_values.raw, page_argument.raw) AS INTEGER) AS page_size,
             documents.kind == 'fragment' as embedded,
           	documents.type_condition as target_type,
@@ -495,7 +495,9 @@ func DiscoverListsThenValidate(
             LEFT JOIN argument_values AS document_values 
                 ON document_variables.default_value = document_values.id 
                 AND document_values."document" = documents.id
-            LEFT JOIN selection_directive_arguments AS mode_argument ON mode_argument."name" = 'mode'
+					  LEFT JOIN selection_directive_arguments AS mode_argument
+							  ON selection_directives.id = mode_argument.parent
+							  AND mode_argument."name" = 'mode'
             LEFT JOIN argument_values as mode_argument_value ON mode_argument."value" = mode_argument_value.id
           WHERE selection_directives.directive IN ($paginate_directive, $list_directive)
             AND (raw_documents.current_task = $task_id OR $task_id IS NULL)
@@ -517,7 +519,7 @@ func DiscoverListsThenValidate(
         SELECT
           b.selection_id,
           s_edges.id       AS edges_id,
-          b.raw_document_id,
+          b.document_id,
           tf_edges.type    AS edge_type
         FROM base b
           JOIN selection_refs sr
@@ -536,7 +538,7 @@ func DiscoverListsThenValidate(
           e.selection_id,
           s_node.id        AS node_id,
           tf_node.type     AS node_list_type,
-          e.raw_document_id,
+          e.document_id,
           e.edge_type
         FROM edges e
           JOIN selection_refs sr2
@@ -561,16 +563,16 @@ func DiscoverListsThenValidate(
 
       CASE
         WHEN b.type_modifiers LIKE '%]%' THEN b.selection_id
-        ELSE n.node_id
+        ELSE COALESCE(n.node_id, b.selection_id)
       END AS node_id,
 
-      b.raw_document_id,
-      (b.type_modifiers NOT LIKE '%]%')    AS connection, 
+      b.document_id,
+      (b.type_modifiers NOT LIKE '%]%')    AS connection,
 
       b.selection_id,
       b.directive,
 
-      n.edge_type,                        
+      n.edge_type,
       b.base_list_type AS connection_type,
       b.page_size,
       b.embedded,
@@ -594,7 +596,7 @@ func DiscoverListsThenValidate(
 		SelectionID    int
 		ListField      int
 		Filepath       string
-		RawDocument    int
+		Document       int
 		NodeType       string
 		EdgeType       any
 		ConnectionType any
@@ -616,7 +618,7 @@ func DiscoverListsThenValidate(
 		filepath := nameStatement.ColumnText(3)
 		finalType := nameStatement.ColumnText(4)
 		selectionID := nameStatement.ColumnInt(5)
-		rawDocument := nameStatement.ColumnInt(6)
+		document := nameStatement.ColumnInt(6)
 		connection := nameStatement.ColumnBool(7)
 		listField := nameStatement.ColumnInt(8)
 		directive := nameStatement.ColumnText(9)
@@ -644,7 +646,7 @@ func DiscoverListsThenValidate(
 				ListName:       listName,
 				SelectionID:    selectionID,
 				Filepath:       filepath,
-				RawDocument:    rawDocument,
+				Document:       document,
 				NodeType:       finalType,
 				EdgeType:       edgeType,
 				ConnectionType: connectionType,
@@ -681,16 +683,16 @@ func DiscoverListsThenValidate(
 	// - we'll consider them when validating directive and fragment spreads
 	// - we'll use them to insert the operation schema items
 	insertDiscoveredLists, err := conn.Prepare(`
-		INSERT INTO discovered_lists 
+		INSERT INTO discovered_lists
       (
-        name, 
-        node_type, 
-        edge_type, 
-        connection_type, 
-        raw_document, 
-        connection, 
+        name,
+        node_type,
+        edge_type,
+        connection_type,
+        document,
+        connection,
         list_field,
-        paginate, 
+        paginate,
         node,
         page_size,
         mode,
@@ -698,13 +700,13 @@ func DiscoverListsThenValidate(
         target_type
       ) VALUES (
         $name,
-        $node_type, 
-        $edge_type, 
-        $connection_type, 
-        $raw_document,
-        $connection, 
-        $list_field, 
-        $paginate, 
+        $node_type,
+        $edge_type,
+        $connection_type,
+        $document,
+        $connection,
+        $list_field,
+        $paginate,
         $node,
         $page_size,
         $mode,
@@ -744,14 +746,16 @@ func DiscoverListsThenValidate(
 			list.TargetType = "Query"
 		}
 
-		// insert the discovered list into the database
+		// Use the node selection ID from the query result
+		nodeSelectionID := list.SelectionID
+
 		err = db.ExecStatement(insertDiscoveredLists, map[string]any{
 			"name":            list.ListName,
 			"node_type":       list.NodeType,
 			"connection_type": list.ConnectionType,
 			"edge_type":       list.EdgeType,
-			"node":            list.SelectionID,
-			"raw_document":    list.RawDocument,
+			"node":            nodeSelectionID,
+			"document":        list.Document,
 			"connection":      list.Connection,
 			"list_field":      list.ListField,
 			"page_size":       list.PageSize,
@@ -806,34 +810,34 @@ func validateDirectives(
 			FROM discovered_lists
 		)
 		SELECT
-			sd.directive,
-			rd.filepath,
-			sd.row,
-			sd.column
-		FROM selection_directives sd
-			JOIN selections s ON s.id = sd.selection_id
-			JOIN selection_refs sr ON sr.child_id = s.id
-			JOIN documents d ON d.id = sr.document
-			JOIN raw_documents rd ON rd.id = d.raw_document
-			LEFT JOIN directives dir ON sd.directive = dir.name
-			LEFT JOIN discovered_directives dl ON sd.directive = dl.key
-		WHERE dir.name IS NULL AND dl.key IS NULL
-			AND (rd.current_task = $task_id OR $task_id IS NULL)
+			selection_directives.directive,
+			raw_documents.filepath,
+			selection_directives.row,
+			selection_directives.column
+		FROM selection_directives
+			JOIN selections ON selections.id = selection_directives.selection_id
+			JOIN selection_refs ON selection_refs.child_id = selections.id
+			JOIN documents ON documents.id = selection_refs.document
+			JOIN raw_documents ON raw_documents.id = documents.raw_document
+			LEFT JOIN directives ON selection_directives.directive = directives.name
+			LEFT JOIN discovered_directives ON selection_directives.directive = discovered_directives.key
+		WHERE directives.name IS NULL AND discovered_directives.key IS NULL
+			AND (raw_documents.current_task = $task_id OR $task_id IS NULL)
 
 		UNION ALL
 
 		SELECT
-			dd.directive,
-			rd.filepath,
-			dd.row,
-			dd.column
-		FROM document_directives dd
-			JOIN documents d ON d.id = dd.document
-			JOIN raw_documents rd ON rd.id = d.raw_document
-			LEFT JOIN directives dir ON dd.directive = dir.name
-			LEFT JOIN discovered_directives dl ON dd.directive = dl.key
-		WHERE dir.name IS NULL AND dl.key IS NULL
-			AND (rd.current_task = $task_id OR $task_id IS NULL)
+			document_directives.directive,
+			raw_documents.filepath,
+			document_directives.row,
+			document_directives.column
+		FROM document_directives
+			JOIN documents ON documents.id = document_directives.document
+			JOIN raw_documents ON raw_documents.id = documents.raw_document
+			LEFT JOIN directives ON document_directives.directive = directives.name
+			LEFT JOIN discovered_directives ON document_directives.directive = discovered_directives.key
+		WHERE directives.name IS NULL AND discovered_directives.key IS NULL
+			AND (raw_documents.current_task = $task_id OR $task_id IS NULL)
 	`
 	bindings := map[string]any{
 		"delete_prefix": graphql.ListOperationSuffixDelete,
@@ -920,50 +924,66 @@ func validatePaginateArgs(
 	errs *plugins.ErrorList,
 ) {
 	conn, err := db.Take(ctx)
+	if err != nil {
+		errs.Append(plugins.WrapError(err))
+	}
 	defer db.Put(conn)
 
 	// This query retrieves paginate usage info plus field definitions
 	usageQuery, err := conn.Prepare(`
-		SELECT
-			s.alias,
-			d.name,
-			rd.filepath,
-			sr.row,
-			sr.column,
-			GROUP_CONCAT(DISTINCT sa.name) AS appliedArgs,
-			argument_values.raw as paginateMode,
-			GROUP_CONCAT(DISTINCT field_args.name || ':' || field_args.type) AS fieldArgDefs,
-			discovered_lists.name,
-			selection_directives.directive,
-			type_fields.type_modifiers,
-			discovered_lists.id,
-      COALESCE(
-        MAX(CASE WHEN field_args.name = 'after'  THEN field_args.type END),
-        MAX(CASE WHEN field_args.name = 'before' THEN field_args.type END)
-      ) AS cursor_type
-		FROM discovered_lists
-			JOIN selections s ON discovered_lists.list_field = s.id
-			JOIN selection_refs sr ON sr.child_id = s.id
-			JOIN documents d ON d.id = sr.document
-			JOIN raw_documents rd ON rd.id = d.raw_document
-			JOIN selection_directives
-				ON s.id = selection_directives.selection_id
-				AND selection_directives.directive in ($paginate_directive, $list_directive)
-			LEFT JOIN selection_directive_arguments
-				ON selection_directive_arguments.parent = selection_directives.id
-				AND selection_directive_arguments.name = $paginate_mode_arg
-			LEFT JOIN argument_values ON selection_directive_arguments.value = argument_values.id
-			LEFT JOIN selection_arguments sa ON sa.selection_id = s.id AND sa.document = d.id
-			LEFT JOIN selections parent_ref ON parent_ref.id = sr.parent_id
-			LEFT JOIN type_fields ON type_fields.id = parent_ref.type
-			LEFT JOIN type_field_arguments field_args ON field_args.field = s.type
-		GROUP BY discovered_lists.id
-	`)
-	db.BindStatement(usageQuery, map[string]any{
-		"paginate_mode_arg":  "mode",
+			SELECT
+				s.alias AS alias,
+				d.name AS name,
+				rd.filepath AS filepath,
+				GROUP_CONCAT(
+					DISTINCT CASE
+						WHEN sa_values.kind != 'Variable' THEN sa.name
+      			WHEN sa_values.kind = 'Variable' AND dv.default_value IS NOT NULL THEN sa.name
+      			WHEN sa_values.kind = 'Variable' AND dv.type_modifiers LIKE '%!'  THEN sa.name
+					END
+				) AS appliedArgs,
+				argument_values.raw AS paginateMode,
+				GROUP_CONCAT(
+					DISTINCT COALESCE(field_args.name,'') || ':' || COALESCE(field_args.type,'')
+				) AS fieldArgDefs,
+				discovered_lists.name AS discovered_list_name,
+				GROUP_CONCAT(DISTINCT selection_directives.directive) AS directive,
+				type_fields.type_modifiers AS type_modifiers,
+				discovered_lists.id AS discovered_list_id,
+				COALESCE(
+					MAX(CASE WHEN field_args.name = 'after'  THEN field_args.type END),
+					MAX(CASE WHEN field_args.name = 'before' THEN field_args.type END)
+				) AS cursor_type,
+				s.id AS selection_id
+			FROM selections s
+				JOIN discovered_lists ON discovered_lists.list_field = s.id
+				LEFT JOIN selection_refs refs ON refs.child_id = s.id
+				LEFT JOIN documents d ON d.id = refs.document
+				LEFT JOIN raw_documents rd ON rd.id = d.raw_document
+				LEFT JOIN selection_directives	ON selection_directives.selection_id = s.id AND selection_directives.directive IN ($paginate_directive, $list_directive)
+				LEFT JOIN selection_directive_arguments	ON selection_directive_arguments.parent = selection_directives.id AND selection_directive_arguments.name = $mode
+				LEFT JOIN argument_values	ON argument_values.id = selection_directive_arguments.value
+				LEFT JOIN selection_arguments sa	ON sa.selection_id = s.id AND (refs.document IS NULL OR sa.document = refs.document)
+				LEFT JOIN argument_values sa_values	ON sa_values.id = sa.value
+				LEFT JOIN document_variables dv	ON dv.document = d.id AND dv.name = sa_values.raw
+				LEFT JOIN selections parent_ref	ON parent_ref.id = refs.parent_id
+				LEFT JOIN type_fields	ON type_fields.id = parent_ref.type
+				LEFT JOIN type_field_arguments field_args	ON field_args.field = s.type
+			WHERE (rd.current_task = $task_id OR $task_id IS NULL)
+			GROUP BY s.id
+		`)
+	if err != nil {
+		errs.Append(plugins.WrapError(err))
+		return
+	}
+	err = db.BindStatement(usageQuery, map[string]any{
 		"paginate_directive": graphql.PaginationDirective,
 		"list_directive":     graphql.ListDirective,
+		"mode":               "mode",
 	})
+	if err != nil {
+		errs.Append(plugins.WrapError(err))
+	}
 	defer usageQuery.Finalize()
 
 	// if we discover a connection-based pagination we should update the discovered list with the direction
@@ -1000,32 +1020,30 @@ func validatePaginateArgs(
 
 	seenNames := map[string]string{}
 
-	db.StepStatement(ctx, usageQuery, func() {
-		fieldName := usageQuery.ColumnText(0)
-		documentName := usageQuery.ColumnText(1)
-		filepath := usageQuery.ColumnText(2)
-		row := usageQuery.ColumnInt(3)
-		column := usageQuery.ColumnInt(4)
-		appliedArgs := usageQuery.ColumnText(5)
-		paginateMode := usageQuery.ColumnText(6)
-		fieldArgDefs := usageQuery.ColumnText(7)
-		listName := usageQuery.ColumnText(8)
-		directive := usageQuery.ColumnText(9)
-		typeModifiers := usageQuery.ColumnText(10)
-		listID := usageQuery.ColumnInt(11)
+	err = db.StepStatement(ctx, usageQuery, func() {
+		fieldName := usageQuery.GetText("alias")
+		documentName := usageQuery.GetText("name")
+		filepath := usageQuery.GetText("filepath")
+		row := int(usageQuery.GetInt64("row"))
+		column := int(usageQuery.GetInt64("column"))
+		appliedArgs := usageQuery.GetText("appliedArgs")
+		paginateMode := usageQuery.GetText("paginateMode")
+		fieldArgDefs := usageQuery.GetText("fieldArgDefs")
+		listName := usageQuery.GetText("discovered_list_name")
+		directive := usageQuery.GetText("directive")
+		typeModifiers := usageQuery.GetText("type_modifiers")
+		listID := usageQuery.GetInt64("discovered_list_id")
 		cursorType := usageQuery.GetText("cursor_type")
 
-		// Ensure that the list name is unique across files
-		if previousFP, ok := seenNames[listName]; listName != "" && ok {
-			if previousFP != filepath {
-				errs.Append(&plugins.Error{
-					Message: fmt.Sprintf("List %q is defined more than once", listName),
-					Kind:    plugins.ErrorKindValidation,
-					Locations: []*plugins.ErrorLocation{
-						{Filepath: filepath, Line: row, Column: column},
-					},
-				})
-			}
+		// Ensure that the list name is unique
+		if _, ok := seenNames[listName]; listName != "" && ok {
+			errs.Append(&plugins.Error{
+				Message: fmt.Sprintf("List %q is defined more than once", listName),
+				Kind:    plugins.ErrorKindValidation,
+				Locations: []*plugins.ErrorLocation{
+					{Filepath: filepath, Line: row, Column: column},
+				},
+			})
 
 			// we're done processing this entry
 			return
@@ -1064,7 +1082,7 @@ func validatePaginateArgs(
 		appliedSet := make(map[string]bool)
 		if appliedArgs != "" {
 			for _, arg := range strings.Split(appliedArgs, ",") {
-				appliedSet[strings.TrimSpace(arg)] = true
+				appliedSet[arg] = true
 			}
 		}
 
@@ -1073,7 +1091,7 @@ func validatePaginateArgs(
 
 		// validate based on supported pagination mode.
 		if cursorPagination {
-			if !forwardApplied && !backwardsApplied {
+			if !forwardApplied && !backwardsApplied && paginateMode != "SinglePage" {
 				errs.Append(&plugins.Error{
 					Message: fmt.Sprintf(
 						"Field %q in document %q with cursor-based pagination must have either a 'first' or a 'last' argument",
@@ -1090,7 +1108,7 @@ func validatePaginateArgs(
 			if forwardApplied && backwardsApplied && paginateMode != "SinglePage" {
 				errs.Append(&plugins.Error{
 					Message: fmt.Sprintf(
-						"Field %q in document %q with cursor-based pagination cannot have both 'first' and 'last' arguments in Infinite mode",
+						"Field %q in document %q with cursor-based pagination cannot have both 'first' and 'last' arguments in Infinite mode.",
 						fieldName,
 						documentName,
 					),
@@ -1147,4 +1165,8 @@ func validatePaginateArgs(
 			})
 		}
 	})
+	if err != nil {
+		errs.Append(plugins.WrapError(err))
+		return
+	}
 }

@@ -253,11 +253,18 @@ func generateDocumentsFile(
 	var documentString strings.Builder
 
 	err := db.StepQuery(ctx, `
-		SELECT d.printed
-		FROM discovered_lists dl
-		JOIN documents d ON dl.raw_document = d.raw_document
+		SELECT DISTINCT d.printed
+		FROM documents d
 		WHERE d.kind = 'fragment'
-		ORDER BY dl.name, d.rowid
+		  AND d.internal = true
+		  AND d.visible = false
+		  AND EXISTS (
+		    SELECT 1 FROM discovered_lists dl
+		    WHERE d.name = dl.name || '_insert'
+		       OR d.name = dl.name || '_toggle'
+		       OR d.name = dl.name || '_remove'
+		  )
+		ORDER BY d.name
 	`, nil, func(stmt *sqlite.Stmt) {
 		printed := stmt.ColumnText(0)
 		// remove __typename from the printed document, maybe there is a better way to do this
@@ -349,6 +356,9 @@ func generateEnumFiles(
 	}
 
 	var enumString strings.Builder
+	// start off with the values of helper type
+	enumString.WriteString("type ValuesOf<T> = T[keyof T]\n\n")
+
 	for _, enum := range enums {
 		// js enum definition generation
 		if enum.Description != "" {
@@ -370,7 +380,12 @@ func generateEnumFiles(
 			}
 			enumString.WriteString(fmt.Sprintf("    \"%s\": \"%s\"", value.Value, value.Value))
 		}
-		enumString.WriteString("\n};\n\n")
+		enumString.WriteString("\n} as const;\n\n")
+		fmt.Fprintf(&enumString,
+			"export type %s$options = ValuesOf<typeof %s>\n\n",
+			enum.Name,
+			enum.Name,
+		)
 	}
 
 	// writing enums.js
@@ -386,70 +401,11 @@ func generateEnumFiles(
 	if err != nil {
 		return plugins.WrapError(err)
 	}
-
-	// ts enum definitions using template strings
-	var tsEnumString strings.Builder
-	tsEnumString.WriteString("type ValuesOf<T> = T[keyof T]\n\n")
-
-	for _, enum := range enums {
-		// ts enum definition generation
-		if enum.Description != "" {
-			// handle multi-line descriptions
-			lines := strings.Split(enum.Description, "\n")
-			tsEnumString.WriteString("/**\n")
-			for _, line := range lines {
-				tsEnumString.WriteString(fmt.Sprintf(" * %s\n", line))
-			}
-			tsEnumString.WriteString(" */\n")
-		}
-		tsEnumString.WriteString(fmt.Sprintf("export declare const %s: {\n", enum.Name))
-		for _, value := range enum.Values {
-			if value.Description != "" {
-				// handle multi-line descriptions (e.g., with @deprecated)
-				lines := strings.Split(value.Description, "\n")
-				tsEnumString.WriteString("    /**\n")
-				for _, line := range lines {
-					tsEnumString.WriteString(fmt.Sprintf("     * %s\n", line))
-				}
-				tsEnumString.WriteString("    */\n")
-			}
-			tsEnumString.WriteString(
-				fmt.Sprintf("    readonly %s: \"%s\";\n", value.Value, value.Value),
-			)
-		}
-		tsEnumString.WriteString("}\n\n")
-		tsEnumString.WriteString(
-			fmt.Sprintf("export type %s$options = ValuesOf<typeof %s>\n\n", enum.Name, enum.Name),
-		)
-	}
-
-	// writing to enums.d.ts
-	enumsTypesFileLocation := projectConfig.DefinitionsEnumTypes()
-	tsDir := filepath.Dir(enumsTypesFileLocation)
-	err = fs.MkdirAll(tsDir, 0o755)
-	if err != nil {
-		return plugins.WrapError(err)
-	}
-
-	err = afero.WriteFile(fs, enumsTypesFileLocation, []byte(tsEnumString.String()), 0o644)
-	if err != nil {
-		return plugins.WrapError(err)
-	}
-
 	// generate index.js file
 	indexJsContent := "\nexport * from './enums.js'\n\n"
 	indexJsLocation := projectConfig.DefinitionsIndexJs()
 
 	err = afero.WriteFile(fs, indexJsLocation, []byte(indexJsContent), 0o644)
-	if err != nil {
-		return plugins.WrapError(err)
-	}
-
-	// generate index.d.ts file
-	indexDtsContent := "\nexport * from './enums.js'\n\n"
-	indexDtsLocation := projectConfig.DefinitionsIndexDts()
-
-	err = afero.WriteFile(fs, indexDtsLocation, []byte(indexDtsContent), 0o644)
 	if err != nil {
 		return plugins.WrapError(err)
 	}

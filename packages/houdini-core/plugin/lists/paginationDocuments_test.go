@@ -1,17 +1,20 @@
 package lists_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
+	core "code.houdinigraphql.com/packages/houdini-core/plugin"
 	"code.houdinigraphql.com/plugins"
 	"code.houdinigraphql.com/plugins/graphql"
 	"code.houdinigraphql.com/plugins/tests"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPaginationDocumentGeneration(t *testing.T) {
-	tests.RunTable(t, tests.Table[config.PluginConfig]{
+	tests.RunTable(t, tests.Table[config.PluginConfig, *core.HoudiniCore]{
 		Schema: `
 			type Query {
 				users(limit: Int, offset: Int): [User!]!
@@ -30,7 +33,7 @@ func TestPaginationDocumentGeneration(t *testing.T) {
 			type User implements Node {
 				id: ID!
 				firstName: String!
-				friends(first:Int, after: String, last: Int, before: String): UserConnection!
+				friends(first:Int, after: String, last: Int, before: String, snapshot: String): UserConnection!
 			}
 
 			type UserConnection {
@@ -142,7 +145,7 @@ func TestPaginationDocumentGeneration(t *testing.T) {
 				Pass: true,
 				Input: []string{
 					`
-						query AllUsers($first: Int) {
+						query AllUsers($first: Int!) {
 							userConnection(first: $first) @paginate {
 								edges {
 									node {
@@ -155,7 +158,7 @@ func TestPaginationDocumentGeneration(t *testing.T) {
 				},
 				Expected: []tests.ExpectedDocument{
 					tests.ExpectedDoc(`
-						query AllUsers($first: Int, $after: String, $before: String, $last: Int) @dedupe(match: Variables) {
+						query AllUsers($first: Int!, $after: String, $before: String, $last: Int) @dedupe(match: Variables) {
 							userConnection(first: $first, after: $after,  last: $last, before: $before) @paginate {
 								edges {
 									node {
@@ -163,8 +166,8 @@ func TestPaginationDocumentGeneration(t *testing.T) {
 										__typename
 										id
 									}
-									cursor
 									__typename
+									cursor
 								}
 								__typename
 								pageInfo {
@@ -404,8 +407,9 @@ func TestPaginationDocumentGeneration(t *testing.T) {
 				},
 				Expected: []tests.ExpectedDocument{
 					tests.ExpectedDoc(`
-						fragment AllUsers_c9Zhk on Query {
-							userConnection(first: $first, after: $after, last: $last, before: $before) @paginate {
+						fragment AllUsers on Query {
+							__typename
+							userConnection(first: 10) @paginate {
 								edges {
 									node {
 										firstName
@@ -425,10 +429,54 @@ func TestPaginationDocumentGeneration(t *testing.T) {
 							}
 						}
 					`),
+					tests.ExpectedDoc(`
+						fragment AllUsers_paginated_c9Zhk on Query {
+							__typename
+							userConnection(first: $first, after: $after, last: $last, before: $before) @paginate {
+								edges {
+									node {
+										firstName
+										__typename
+										id
+									}
+									cursor
+									__typename
+								}
+								pageInfo {
+									hasNextPage
+									hasPreviousPage
+									startCursor
+									endCursor
+								}
+								__typename
+							}
+						}
+					`).WithVariables(
+						tests.ExpectedOperationVariable{
+							Name: "first",
+							Type: "Int",
+							DefaultValue: &tests.ExpectedArgumentValue{
+								Kind: "Int",
+								Raw:  "10",
+							},
+						},
+						tests.ExpectedOperationVariable{
+							Name: "last",
+							Type: "Int",
+						},
+						tests.ExpectedOperationVariable{
+							Name: "after",
+							Type: "String",
+						},
+						tests.ExpectedOperationVariable{
+							Name: "before",
+							Type: "String",
+						},
+					),
 					tests.ExpectedDoc(
 						fmt.Sprintf(`
 							query %s($first: Int = 10, $after: String, $before: String, $last: Int ) @dedupe(match: Variables) {
-								...AllUsers_c9Zhk @with(first: $first, after: $after, before: $before, last: $last)
+								...AllUsers_paginated_c9Zhk @with(first: $first, after: $after, before: $before, last: $last)
 							}
 						`,
 							graphql.FragmentPaginationQueryName("AllUsers"),
@@ -453,34 +501,57 @@ func TestPaginationDocumentGeneration(t *testing.T) {
 				},
 				Expected: []tests.ExpectedDocument{
 					tests.ExpectedDoc(`
-						fragment Friends_c9Zhk  on User {
-              id
+						fragment Friends_paginated_c9Zhk  on User {
               __typename
-							friends(first: $first, after: $after, last: $last, before: $before) @paginate {
+              friends(first: $first, after: $after, last: $last, before: $before) @paginate {
 								edges {
 									node {
 										firstName
 										__typename
 										id
 									}
-									__typename
 									cursor
+									__typename
 								}
-								__typename
 								pageInfo {
 									hasNextPage
 									hasPreviousPage
 									startCursor
 									endCursor
 								}
+								__typename
 							}
+							id
 						}
-					`),
+					`).WithVariables(
+						tests.ExpectedOperationVariable{
+							Name: "first",
+							Type: "Int",
+							DefaultValue: &tests.ExpectedArgumentValue{
+								Kind: "Int",
+								Raw:  "10",
+							},
+						},
+						tests.ExpectedOperationVariable{
+							Name: "after",
+							Type: "String",
+						},
+						tests.ExpectedOperationVariable{
+							Name: "last",
+							Type: "Int",
+						},
+						tests.ExpectedOperationVariable{
+							Name: "before",
+							Type: "String",
+						},
+					),
 					tests.ExpectedDoc(
 						fmt.Sprintf(`
 							query %s($first: Int = 10, $after: String, $before: String, $last: Int, $id: ID!) @dedupe(match: Variables) {
 								node(id: $id) {
-									...Friends_c9Zhk @with(first: $first, after: $after, before: $before, last: $last)
+									...Friends_paginated_c9Zhk @with(first: $first, after: $after, before: $before, last: $last)
+									__typename
+									id
 								}
 							}
 						`,
@@ -508,26 +579,294 @@ func TestPaginationDocumentGeneration(t *testing.T) {
 				},
 				Expected: []tests.ExpectedDocument{
 					tests.ExpectedDoc(`
-						fragment Believers_1uyQEt on Legend {
+						fragment Believers_paginated_1uyQEt on Legend {
+							title
+							__typename
 							believers(limit: $limit, offset: $offset) @paginate {
 								firstName
 								__typename
 								id
 							}
-              __typename
-              title
 						}
-					`),
+					`).WithVariables(
+						tests.ExpectedOperationVariable{
+							Name: "limit",
+							Type: "Int",
+							DefaultValue: &tests.ExpectedArgumentValue{
+								Kind: "Int",
+								Raw:  "10",
+							},
+						},
+						tests.ExpectedOperationVariable{
+							Name: "offset",
+							Type: "Int",
+						},
+					),
 					tests.ExpectedDoc(
 						fmt.Sprintf(`
 							query %s($limit: Int = 10, $offset: Int, $title: String!) @dedupe(match: Variables) {
 								legend(title: $title) {
-									...Believers_1uyQEt @with(limit: $limit, offset: $offset)
+									...Believers_paginated_1uyQEt @with(limit: $limit, offset: $offset)
+									__typename
+									title
 								}
 							}
 						`,
 							graphql.FragmentPaginationQueryName("Believers"),
 						)),
+				},
+			},
+			{
+				Name: "fragment suppress dedupe",
+				Pass: true,
+				Input: []string{
+					`
+						fragment AllUsers on Query {
+							userConnection(first: 10) @paginate {
+								edges {
+									node {
+										firstName
+									}
+								}
+							}
+						}
+					`,
+				},
+				ProjectConfig: func(config *plugins.ProjectConfig) {
+					config.SuppressPaginationDeduplication = true
+				},
+				Expected: []tests.ExpectedDocument{
+					tests.ExpectedDoc(`
+						fragment AllUsers on Query {
+							userConnection(first: 10) @paginate {
+								edges {
+									node {
+										firstName
+										__typename
+										id
+									}
+									__typename
+									cursor
+								}
+								__typename
+								pageInfo {
+									hasNextPage
+									hasPreviousPage
+									startCursor
+									endCursor
+								}
+							}
+							__typename
+						}
+					`),
+					tests.ExpectedDoc(`
+						fragment AllUsers_paginated_c9Zhk on Query {
+							__typename
+							userConnection(first: $first, after: $after, last: $last, before: $before) @paginate {
+								edges {
+									node {
+										firstName
+										__typename
+										id
+									}
+									cursor
+									__typename
+								}
+								pageInfo {
+									hasNextPage
+									hasPreviousPage
+									startCursor
+									endCursor
+								}
+								__typename
+							}
+						}
+					`).WithVariables(
+						tests.ExpectedOperationVariable{
+							Name: "first",
+							Type: "Int",
+							DefaultValue: &tests.ExpectedArgumentValue{
+								Kind: "Int",
+								Raw:  "10",
+							},
+						},
+						tests.ExpectedOperationVariable{
+							Name: "after",
+							Type: "String",
+						},
+						tests.ExpectedOperationVariable{
+							Name: "last",
+							Type: "Int",
+						},
+						tests.ExpectedOperationVariable{
+							Name: "before",
+							Type: "String",
+						},
+					),
+					tests.ExpectedDoc(
+						fmt.Sprintf(`
+							query %s($first: Int = 10, $after: String, $before: String, $last: Int ) {
+								...AllUsers_paginated_c9Zhk @with(first: $first, after: $after, before: $before, last: $last)
+							}
+						`,
+							graphql.FragmentPaginationQueryName("AllUsers"),
+						)),
+				},
+			},
+			{
+				Name: "fragment with required arguments preserves type modifiers",
+				Pass: true,
+				Input: []string{
+					`
+						fragment UserFriends on User @arguments(snapshot: { type: "String!" }) {
+							friends(first: 2, snapshot: $snapshot) @paginate {
+								edges {
+									node {
+										firstName
+									}
+								}
+							}
+						}
+					`,
+				},
+				Expected: []tests.ExpectedDocument{
+					tests.ExpectedDoc(`
+						fragment UserFriends_paginated_SAvn1 on User {
+							friends(first: $first, after: $after, last: $last, before: $before, snapshot: $snapshot) @paginate {
+								edges {
+									node {
+										firstName
+										__typename
+										id
+									}
+									cursor
+									__typename
+								}
+								pageInfo {
+									hasNextPage
+									hasPreviousPage
+									startCursor
+									endCursor
+								}
+								__typename
+							}
+							__typename
+							id
+						}
+					`).WithVariables(
+						tests.ExpectedOperationVariable{
+							Name: "first",
+							Type: "Int",
+							DefaultValue: &tests.ExpectedArgumentValue{
+								Kind: "Int",
+								Raw:  "2",
+							},
+						},
+						tests.ExpectedOperationVariable{
+							Name: "after",
+							Type: "String",
+						},
+						tests.ExpectedOperationVariable{
+							Name: "last",
+							Type: "Int",
+						},
+						tests.ExpectedOperationVariable{
+							Name: "before",
+							Type: "String",
+						},
+						tests.ExpectedOperationVariable{
+							Name:          "snapshot",
+							Type:          "String",
+							TypeModifiers: "!",
+						},
+					),
+					tests.ExpectedDoc(
+						fmt.Sprintf(`
+							query %s($first: Int = 2, $after: String, $before: String, $last: Int, $id: ID!, $snapshot: String!) @dedupe(match: Variables) {
+								node(id: $id) {
+									...UserFriends_paginated_SAvn1 @with(first: $first, after: $after, before: $before, last: $last, snapshot: $snapshot)
+									__typename
+									id
+								}
+							}
+						`,
+							graphql.FragmentPaginationQueryName("UserFriends"),
+						)),
+				},
+			},
+		},
+	})
+}
+
+func TestPaginationDocumentGeneration_multipleInvocations(t *testing.T) {
+	tests.RunTable(t, tests.Table[config.PluginConfig, *core.HoudiniCore]{
+		Schema: `
+			type Query {
+				users(limit: Int, offset: Int): [User!]!
+				userConnection(first: Int, after: String, last: Int, before: String): UserConnection!
+				forwardConnection(first: Int, after: String): UserConnection!
+				backwardConnection(last: Int, before: String): UserConnection!
+				node(id: ID!): Node
+				legend(title: String!): Legend
+			}
+
+			type Legend {
+				title: String!
+				believers(limit: Int, offset: Int): [User!]!
+			}
+
+			type User implements Node {
+				id: ID!
+				firstName: String!
+				friends(first:Int, after: String, last: Int, before: String, snapshot: String): UserConnection!
+			}
+
+			type UserConnection {
+				pageInfo: PageInfo!
+				edges: [UserEdge!]!
+			}
+
+			type UserEdge {
+				cursor: String!
+				node: User!
+			}
+
+			type PageInfo {
+				hasNextPage: Boolean!
+				hasPreviousPage: Boolean!
+				startCursor: String
+				endCursor: String
+			}
+
+			interface Node {
+				id: ID!
+			}
+		`,
+		VerifyTest: func(t *testing.T, plugin *core.HoudiniCore, test tests.Test[config.PluginConfig]) {
+			// all we need to do now is run the pagination document generation again
+			err := plugin.AfterValidate(context.Background())
+			require.Nil(t, err)
+
+			// make sure that the documents are still valid
+			err = plugin.Validate(context.Background())
+			require.Nil(t, err)
+		},
+		Tests: []tests.Test[config.PluginConfig]{
+			{
+				Name: "adds full cursor args to forward bidirectional connection",
+				Pass: true,
+				Input: []string{
+					`
+						fragment AllUsers on Query {
+							userConnection(first: 10) @paginate {
+								edges {
+									node {
+										firstName
+									}
+								}
+							}
+						}
+					`,
 				},
 			},
 		},

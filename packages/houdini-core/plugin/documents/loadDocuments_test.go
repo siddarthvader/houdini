@@ -2,7 +2,7 @@ package documents_test
 
 import (
 	"context"
-	"path"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -1612,9 +1612,8 @@ func TestAfterExtract_loadsExtractedQueries(t *testing.T) {
 			}
 			defer db.Close()
 
-			plugin := &plugin.HoudiniCore{
-				Fs: afero.NewMemMapFs(),
-			}
+			plugin := &plugin.HoudiniCore{}
+			plugin.SetFilesystem(afero.NewMemMapFs())
 
 			projectConfig := plugins.ProjectConfig{
 				ProjectRoot: "/project",
@@ -1629,14 +1628,14 @@ func TestAfterExtract_loadsExtractedQueries(t *testing.T) {
 			conn, err := db.Take(context.Background())
 			require.Nil(t, err)
 			defer db.Put(conn)
-			if err := tests.WriteHoudiniSchema(conn); err != nil {
+			if err := tests.WriteDatabaseSchema(conn); err != nil {
 				t.Fatalf("failed to create schema: %v", err)
 			}
 
 			// Use an in-memory file system.
 			afero.WriteFile(
 				plugin.Fs,
-				path.Join("/project", "schema.graphql"),
+				filepath.Join("/project", "schema.graphql"),
 				[]byte(schema),
 				0644,
 			)

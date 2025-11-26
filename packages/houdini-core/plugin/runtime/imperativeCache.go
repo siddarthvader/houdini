@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
-	"code.houdinigraphql.com/packages/houdini-core/plugin/documents/typescript"
+	"code.houdinigraphql.com/packages/houdini-core/plugin/documents/artifacts/typescript"
 	"code.houdinigraphql.com/plugins"
 	"github.com/spf13/afero"
 	"zombiezen.com/go/sqlite"
@@ -28,7 +29,12 @@ func GenerateImperativeCacheTypeDefs(
 	}
 
 	// Target file path
-	targetPath := path.Join(projectConfig.ProjectRoot, projectConfig.RuntimeDir, "generated.d.ts")
+	targetPath := filepath.Join(
+		projectConfig.ProjectRoot,
+		projectConfig.RuntimeDir,
+		"runtime",
+		"generated.ts",
+	)
 
 	// Before we generate the content, let's look at the current content
 	existingContent := ""
@@ -39,6 +45,9 @@ func GenerateImperativeCacheTypeDefs(
 		}
 		existingContent = string(existingContentByte)
 	}
+
+	// make sure the directory exists
+	fs.MkdirAll(path.Dir(targetPath), 0755)
 
 	// Generate the TypeScript content
 	content, err := generateCacheTypeDefContent(ctx, db, projectConfig)
@@ -123,14 +132,11 @@ func generateImports(
 	for _, doc := range sortedDocs {
 		if doc.Kind == "query" {
 			imports.WriteString(fmt.Sprintf(
-				`import { %s$result, %s$input } from "../artifacts/%s";`+"\n",
+				`import type { %s$result, %s$input } from "../artifacts/%s";`+"\n",
 				doc.Name, doc.Name, doc.Name,
 			))
 		}
 	}
-
-	// Add utility imports
-	imports.WriteString(`import type { ValueOf } from "$houdini/runtime/lib/types";` + "\n")
 
 	// Add enum imports - only user-defined enums, not internal ones
 	enumNames, err := getEnumNames(ctx, db)
@@ -139,7 +145,18 @@ func generateImports(
 	}
 	for _, enumName := range enumNames {
 		imports.WriteString(fmt.Sprintf(
-			`import type { %s } from "$houdini/graphql/enums";`+"\n",
+			`import type { %s$options } from "$houdini/graphql/enums";`+"\n",
+			enumName,
+		))
+	}
+
+	inputNames, err := getInputNames(ctx, db)
+	if err != nil {
+		return "", err
+	}
+	for _, enumName := range inputNames {
+		imports.WriteString(fmt.Sprintf(
+			`import type { %s } from "$houdini/graphql/inputs";`+"\n",
 			enumName,
 		))
 	}
@@ -150,12 +167,12 @@ func generateImports(
 			// Use pre-loaded argument info
 			if doc.HasArguments {
 				imports.WriteString(fmt.Sprintf(
-					`import { %s$input } from "../artifacts/%s";`+"\n",
+					`import type { %s$input } from "../artifacts/%s";`+"\n",
 					doc.Name, doc.Name,
 				))
 			}
 			imports.WriteString(fmt.Sprintf(
-				`import { %s$data } from "../artifacts/%s";`+"\n",
+				`import type { %s$data } from "../artifacts/%s";`+"\n",
 				doc.Name, doc.Name,
 			))
 		}
@@ -189,6 +206,7 @@ func getDocumentsWithArguments(
 		       CASE WHEN dd.directive IS NOT NULL THEN 1 ELSE 0 END as has_arguments
 		FROM documents d
 		LEFT JOIN document_directives dd ON d.id = dd.document AND dd.directive = 'arguments'
+		WHERE d.visible = 1 
 		ORDER BY d.name
 	`, nil, func(stmt *sqlite.Stmt) {
 		doc := DocumentWithArgs{
@@ -216,6 +234,24 @@ func getEnumNames(
 		SELECT name
 		FROM types
 		WHERE kind = 'ENUM' AND built_in = 0 AND internal = 0
+		ORDER BY name
+	`, nil, func(stmt *sqlite.Stmt) {
+		enumNames = append(enumNames, stmt.ColumnText(0))
+	})
+
+	return enumNames, err
+}
+
+func getInputNames(
+	ctx context.Context,
+	db plugins.DatabasePool[config.PluginConfig],
+) ([]string, error) {
+	var enumNames []string
+
+	err := db.StepQuery(ctx, `
+		SELECT name
+		FROM types
+		WHERE kind = 'INPUT' AND built_in = 0 AND internal = 0
 		ORDER BY name
 	`, nil, func(stmt *sqlite.Stmt) {
 		enumNames = append(enumNames, stmt.ColumnText(0))
@@ -290,6 +326,14 @@ func generateCacheTypeDef(
 	content.WriteString(queriesSection)
 	content.WriteString(";\n")
 
+	scalarUnion, err := generateScalarUnion(ctx, db)
+	if err != nil {
+		return "", err
+	}
+	content.WriteString("\t\tscalars: ")
+	content.WriteString(scalarUnion)
+	content.WriteString(";\n")
+
 	content.WriteString("};\n")
 
 	return content.String(), nil
@@ -303,7 +347,7 @@ func generateTypesSection(
 	var content strings.Builder
 
 	// Get all concrete types with their fields in a single query
-	typesWithFields, err := getConcreteTypesWithFields(ctx, db)
+	typesWithFields, err := getTypesWithFields(ctx, db)
 	if err != nil {
 		return "", err
 	}
@@ -372,6 +416,83 @@ func generateTypesSection(
 	return content.String(), nil
 }
 
+// generateTypesSectionWithKeyFields is an optimized version that uses pre-fetched key fields
+func generateTypesSectionWithKeyFields(
+	ctx context.Context,
+	db plugins.DatabasePool[config.PluginConfig],
+	projectConfig plugins.ProjectConfig,
+	allKeyFields map[string][]InputField,
+) (string, error) {
+	var content strings.Builder
+
+	// Get all concrete types with their fields in a single query
+	typesWithFields, err := getTypesWithFields(ctx, db)
+	if err != nil {
+		return "", err
+	}
+
+	// Get fragments grouped by type
+	fragmentsByType, err := getFragmentsByType(ctx, db)
+	if err != nil {
+		return "", err
+	}
+
+	// Sort types to ensure __ROOT__ comes first, then alphabetical
+	var sortedTypes []ConcreteTypeWithFields
+	for _, typeInfo := range typesWithFields {
+		sortedTypes = append(sortedTypes, typeInfo)
+	}
+
+	sort.Slice(sortedTypes, func(i, j int) bool {
+		iIsQuery := sortedTypes[i].Operation != nil && *sortedTypes[i].Operation == "query"
+		jIsQuery := sortedTypes[j].Operation != nil && *sortedTypes[j].Operation == "query"
+
+		if iIsQuery && !jIsQuery {
+			return true
+		}
+		if !iIsQuery && jIsQuery {
+			return false
+		}
+		return sortedTypes[i].Name < sortedTypes[j].Name
+	})
+
+	for _, typeInfo := range sortedTypes {
+		typeName := typeInfo.Name
+
+		// Use __ROOT__ for Query type
+		if typeInfo.Operation != nil && *typeInfo.Operation == "query" {
+			typeName = "__ROOT__"
+		}
+
+		content.WriteString(fmt.Sprintf("\t\t\t%s: {\n", typeName))
+
+		// Generate idFields using pre-fetched data
+		idFields, err := generateIdFieldsFromCache(typeInfo.Name, projectConfig, allKeyFields)
+		if err != nil {
+			return "", err
+		}
+		content.WriteString(fmt.Sprintf("\t\t\t\tidFields: %s;\n", idFields))
+
+		// Generate fields
+		fields, err := generateTypeFieldsFromData(ctx, projectConfig, db, typeInfo.Fields)
+		if err != nil {
+			return "", err
+		}
+		content.WriteString(fmt.Sprintf("\t\t\t\tfields: %s;\n", fields))
+
+		// Generate fragments
+		fragments := "[]"
+		if typeFragments, exists := fragmentsByType[typeInfo.Name]; exists {
+			fragments = fmt.Sprintf("[%s]", strings.Join(typeFragments, ", "))
+		}
+		content.WriteString(fmt.Sprintf("\t\t\t\tfragments: %s;\n", fragments))
+
+		content.WriteString("\t\t\t};\n")
+	}
+
+	return content.String(), nil
+}
+
 type ConcreteType struct {
 	Name      string
 	Kind      string
@@ -385,7 +506,7 @@ type ConcreteTypeWithFields struct {
 	Fields    []TypeField
 }
 
-func getConcreteTypesWithFields(
+func getTypesWithFields(
 	ctx context.Context,
 	db plugins.DatabasePool[config.PluginConfig],
 ) (map[string]ConcreteTypeWithFields, error) {
@@ -396,7 +517,7 @@ func getConcreteTypesWithFields(
 		       f.id as field_id, f.name as field_name, f.type, f.type_modifiers
 		FROM types t
 		LEFT JOIN type_fields f ON t.name = f.parent AND f.internal = 0
-		WHERE t.kind = 'OBJECT' AND t.built_in = 0 AND t.internal = 0
+		WHERE t.kind in ('OBJECT', 'INTERFACE') AND t.built_in = 0 AND t.internal = 0
 		ORDER BY t.name, f.name
 	`, nil, func(stmt *sqlite.Stmt) {
 		typeName := stmt.ColumnText(0)
@@ -507,7 +628,7 @@ func getKeyFields(
 		err := db.StepQuery(ctx, `
 			SELECT name, type, type_modifiers
 			FROM type_fields
-			WHERE parent = $typeName AND name = $key
+			WHERE parent = $typeName AND name = $key AND internal = false
 		`, map[string]any{"typeName": typeName, "key": key}, func(stmt *sqlite.Stmt) {
 			field := InputField{
 				Name: stmt.ColumnText(0),
@@ -524,6 +645,125 @@ func getKeyFields(
 	}
 
 	return keyFields, nil
+}
+
+// getAllKeyFields fetches all key fields for all types in a single batch query to avoid O(n²) behavior
+func getAllKeyFields(
+	ctx context.Context,
+	db plugins.DatabasePool[config.PluginConfig],
+	projectConfig plugins.ProjectConfig,
+) (map[string][]InputField, error) {
+	allKeyFields := make(map[string][]InputField)
+
+	// First, get all type configs with their keys
+	typeKeys := make(map[string][]string)
+	err := db.StepQuery(ctx, `
+		SELECT name, keys
+		FROM type_configs
+	`, nil, func(stmt *sqlite.Stmt) {
+		typeName := stmt.ColumnText(0)
+		keysJSON := stmt.ColumnText(1)
+		var keys []string
+		json.Unmarshal([]byte(keysJSON), &keys)
+		typeKeys[typeName] = keys
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Get all types that might need key fields
+	allTypes := make(map[string]bool)
+	err = db.StepQuery(ctx, `
+		SELECT DISTINCT parent
+		FROM type_fields
+		WHERE internal = false
+	`, nil, func(stmt *sqlite.Stmt) {
+		typeName := stmt.ColumnText(0)
+		allTypes[typeName] = true
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// For each type, determine its keys (either from type_configs or default)
+	typeToKeys := make(map[string][]string)
+	for typeName := range allTypes {
+		if keys, exists := typeKeys[typeName]; exists && len(keys) > 0 {
+			typeToKeys[typeName] = keys
+		} else {
+			typeToKeys[typeName] = projectConfig.DefaultKeys
+		}
+	}
+
+	// Now batch query all the key fields for all types
+	for typeName, keys := range typeToKeys {
+		if len(keys) == 0 {
+			continue
+		}
+
+		// Query each key field individually (simpler than building dynamic IN clause)
+		var keyFields []InputField
+		for _, key := range keys {
+			err := db.StepQuery(ctx, `
+				SELECT name, type, type_modifiers
+				FROM type_fields
+				WHERE parent = $typeName AND name = $key AND internal = false
+			`, map[string]any{"typeName": typeName, "key": key}, func(stmt *sqlite.Stmt) {
+				field := InputField{
+					Name: stmt.ColumnText(0),
+					Type: stmt.ColumnText(1),
+				}
+				if stmt.ColumnType(2) == sqlite.TypeText {
+					field.TypeModifiers = stmt.ColumnText(2)
+				}
+				keyFields = append(keyFields, field)
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		allKeyFields[typeName] = keyFields
+	}
+
+	return allKeyFields, nil
+}
+
+// generateIdFieldsFromCache generates idFields using pre-fetched key field data
+func generateIdFieldsFromCache(
+	typeName string,
+	projectConfig plugins.ProjectConfig,
+	allKeyFields map[string][]InputField,
+) (string, error) {
+	// For __ROOT__ (Query type), return empty object
+	if typeName == "Query" {
+		return "{}", nil
+	}
+
+	// Get key fields from cache
+	keyFields, exists := allKeyFields[typeName]
+	if !exists || len(keyFields) == 0 {
+		return "never", nil
+	}
+
+	var fields []string
+	for _, field := range keyFields {
+		tsType, err := typescript.ConvertToTypeScriptType(
+			projectConfig,
+			"",
+			field.Type,
+			field.TypeModifiers,
+			false, // isInput = false for cache key fields
+		)
+		if err != nil {
+			return "", err
+		}
+		// Remove nullability for ID fields
+		tsType = strings.ReplaceAll(tsType, " | null | undefined", "")
+		fields = append(fields, fmt.Sprintf("\n\t\t\t\t\t%s: %s;", field.Name, tsType))
+	}
+
+	return fmt.Sprintf("{%s\n\t\t\t\t}", strings.Join(fields, "")), nil
 }
 
 func generateTypeFieldsFromData(
@@ -584,7 +824,7 @@ func generateFieldType(
 			false,
 		) // isInput = false for cache field types
 	case "ENUM":
-		baseType = field.Type
+		baseType = fmt.Sprintf("%s$options", field.Type)
 	case "OBJECT":
 		baseType = fmt.Sprintf("Record<CacheTypeDef, \"%s\">", field.Type)
 	case "INTERFACE", "UNION":
@@ -652,7 +892,7 @@ func generateFieldArguments(
 	for _, arg := range args {
 		tsType, err := typescript.ConvertToTypeScriptType(
 			projectConfig,
-			"",
+			arg.Kind,
 			arg.Type,
 			arg.TypeModifiers,
 			true, // isInput = true for field arguments (these are inputs to GraphQL operations)
@@ -678,6 +918,7 @@ func generateFieldArguments(
 type FieldArgument struct {
 	Name          string
 	Type          string
+	Kind          string
 	TypeModifiers string
 }
 
@@ -689,14 +930,16 @@ func getFieldArguments(
 	var args []FieldArgument
 
 	err := db.StepQuery(ctx, `
-		SELECT name, type, type_modifiers
+		SELECT type_field_arguments.name, type, type_modifiers, types.kind
 		FROM type_field_arguments
+		JOIN types on type_field_arguments.type = types.name
 		WHERE field = $fieldID
-		ORDER BY name
+		ORDER BY type_field_arguments.name
 	`, map[string]any{"fieldID": fieldID}, func(stmt *sqlite.Stmt) {
 		arg := FieldArgument{
 			Name: stmt.ColumnText(0),
 			Type: stmt.ColumnText(1),
+			Kind: stmt.ColumnText(3),
 		}
 		if stmt.ColumnType(2) == sqlite.TypeText {
 			arg.TypeModifiers = stmt.ColumnText(2)
@@ -718,7 +961,7 @@ func getFragmentsByType(
 		       CASE WHEN dd.directive IS NOT NULL THEN 1 ELSE 0 END as has_arguments
 		FROM documents d
 		LEFT JOIN document_directives dd ON d.id = dd.document AND dd.directive = 'arguments'
-		WHERE d.kind = 'fragment' AND d.type_condition IS NOT NULL
+		WHERE d.kind = 'fragment' AND d.type_condition IS NOT NULL AND d.visible = 1
 		ORDER BY d.type_condition, d.name
 	`, nil, func(stmt *sqlite.Stmt) {
 		typeName := stmt.ColumnText(0)
@@ -753,6 +996,9 @@ func generateListsSection(
 	// Sort lists by name for consistent output
 	var listNames []string
 	for name := range listsWithFilters {
+		if name == "" {
+			continue
+		}
 		listNames = append(listNames, name)
 	}
 	sort.Strings(listNames)
@@ -878,6 +1124,25 @@ func generateListFiltersFromData(args []FieldArgument) string {
 	}
 
 	return fmt.Sprintf("{%s\n\t\t\t\t}", strings.Join(argStrings, ""))
+}
+
+func generateScalarUnion(
+	ctx context.Context,
+	db plugins.DatabasePool[config.PluginConfig],
+) (string, error) {
+	// our goal here is to generate a typescript-safe union of the runtime values that could be seen in a selection (the default scalars + any custom config)
+	scalarValues := []string{"number", "boolean", "string"}
+
+	err := db.StepQuery(ctx, `
+		SELECT DISTINCT "type" from scalar_config
+	`, nil, func(stmt *sqlite.Stmt) {
+		scalarValues = append(scalarValues, stmt.GetText("type"))
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return strings.Join(scalarValues, " | "), nil
 }
 
 func generateQueriesSection(

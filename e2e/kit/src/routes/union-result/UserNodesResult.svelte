@@ -1,8 +1,11 @@
 <script lang="ts">
-  import { CachePolicy, GQL_UserNodesResult } from '$houdini';
+  import { CachePolicy, UserNodesResultStore } from '$houdini';
+  import { stringify} from '$lib/utils/stringify'
+
+  const userNodesResult = new UserNodesResultStore();
 
   async function getAllUsers() {
-    await GQL_UserNodesResult.fetch({
+    await userNodesResult.fetch({
       variables: { forceMessage: false },
       policy: CachePolicy.CacheAndNetwork
     });
@@ -12,5 +15,5 @@
 <button id="getAllUsers" on:click={getAllUsers}>GET AllUsers</button>
 
 <div id="result">
-  <pre>{JSON.stringify($GQL_UserNodesResult?.data, null, 2)}</pre>
+  <pre>{stringify($userNodesResult?.data)}</pre>
 </div>

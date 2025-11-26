@@ -1,6 +1,6 @@
 {
 	"exclude": ["node_modules", "packages/*/build/**"],
-	"include": ["packages/**/*.ts", "packages/**/*.tsx"],
+	"include": ["packages/**/*.ts", "packages/**/*.tsx", "houdini.d.ts"],
 	"compilerOptions": {
 		"moduleResolution": "node",
 		"module": "es2020",
@@ -21,7 +21,15 @@
 		"baseUrl": "./packages/houdini",
 		"paths": {
 			"$houdini": ["../houdini/package"],
-			"$houdini/*": ["../houdini/package/*"]
+			"houdini": ["../houdini/src/lib"],
+			"houdini/vite": ["../houdini/src/vite"],
+			"houdini/test": ["../houdini/src/test"],
+			"houdini/*": ["../houdini/src/lib/*"],
+			"houdini-core/*": ["../houdini-core/*"],
+			"$houdini/*": ["../houdini/package/*"],
+			"$houdini/runtime/*": ["../houdini-core/runtime/*"],
+			"houdini-svelte/*": ["../houdini-svelte/package/lib/*"],
+			"houdini-svelte": ["../houdini-svelte/package/lib"]
 		},
 		"jsx": "react-jsx"
 	}

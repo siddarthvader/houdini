@@ -13,6 +13,7 @@ import (
 	"zombiezen.com/go/sqlite"
 
 	"code.houdinigraphql.com/packages/houdini-core/config"
+	"code.houdinigraphql.com/packages/houdini-core/plugin/documents/artifacts/typescript"
 	"code.houdinigraphql.com/packages/houdini-core/plugin/documents/collected"
 	"code.houdinigraphql.com/plugins"
 	"code.houdinigraphql.com/plugins/graphql"
@@ -29,6 +30,7 @@ func writeSelectionDocument(
 	name string,
 	selection []*collected.Selection,
 	sortKeys bool,
+	typeRoots *typescript.RootTypeNames,
 ) (string, error) {
 	// load the project config
 	projectConfig, _ := db.ProjectConfig(ctx)
@@ -42,6 +44,7 @@ func writeSelectionDocument(
 		name,
 		selection,
 		sortKeys,
+		typeRoots,
 	)
 	if err != nil {
 		return "", err
@@ -63,6 +66,7 @@ func writeSelectionDocument(
 type DocumentData struct {
 	Printed string
 	Hash    string
+	Refetch *collected.DocumentRefetch // pagination metadata collected during traversal
 }
 
 func GenerateSelectionDocument(
@@ -73,6 +77,7 @@ func GenerateSelectionDocument(
 	name string,
 	selection []*collected.Selection,
 	sortKeys bool,
+	rootTypes *typescript.RootTypeNames,
 ) (string, error) {
 	doc := docs.Selections[name]
 
@@ -209,6 +214,7 @@ func GenerateSelectionDocument(
 	}
 
 	// build up the selection string
+	pathBuilder := NewPathBuilder(8) // reasonable initial capacity for most documents
 	selectionValues := stringifySelection(
 		docs,
 		projectConfig,
@@ -220,7 +226,7 @@ func GenerateSelectionDocument(
 		&SelectionFlags{},
 		nil,
 		[]string{},
-		"",
+		pathBuilder,
 		forceLoading,
 	)
 	// build up the input specification
@@ -238,7 +244,7 @@ func GenerateSelectionDocument(
             "%s": "%s",`, variable.Name, variable.Type)
 			if variable.DefaultValue != nil {
 				fmt.Fprintf(&defaultsBuilder, `
-            "%s": %s,`, variable.Name, printValue(variable.DefaultValue, map[string]bool{}))
+            "%s": %s,`, variable.Name, stringifyValue(variable.DefaultValue, map[string]bool{}))
 			}
 		}
 
@@ -315,9 +321,51 @@ func GenerateSelectionDocument(
     "optimisticKeys": true`
 	}
 
-	// there might a refetch spec associated with the document
+	// determine refetch specification from document or selection metadata
+	refetchSpec := flags.Refetch
+	if documentData.Refetch != nil {
+		direction := RefetchDirection(documentData.Refetch.Direction)
+
+		refetchSpec = &RefetchSpec{
+			Path:       documentData.Refetch.Path,
+			Method:     RefetchMethod(documentData.Refetch.Method),
+			PageSize:   documentData.Refetch.PageSize,
+			Mode:       RefetchMode(documentData.Refetch.Mode),
+			TargetType: documentData.Refetch.TargetType,
+			Embedded:   documentData.Refetch.Embedded,
+			Paginated:  documentData.Refetch.Paginated,
+			Direction:  direction,
+		}
+	}
+	if refetchSpec != nil && refetchSpec.Direction == "" {
+		refetchSpec.Direction = RefetchDirectionForward
+	}
+
 	refetch := ""
-	if flags.Refetch != nil {
+	if refetchSpec != nil {
+		// For fragment pagination queries, we need to strip the first path entry
+		// because the pagination query artifact includes the "node" field (or custom resolve query)
+		// but the actual fragment data structure doesn't include this wrapper.
+		// This ensures extractPageInfo can find the correct path to the pageInfo data.
+		pathToUse := refetchSpec.Path
+		if strings.HasSuffix(name, graphql.PaginationQuerySuffix) && len(refetchSpec.Path) > 0 {
+			pathToUse = refetchSpec.Path[1:]
+		}
+
+		// generate JSON array from path slice in one pass
+		var pathBuilder strings.Builder
+		pathBuilder.WriteByte('[')
+		for i, field := range pathToUse {
+			if i > 0 {
+				pathBuilder.WriteByte(',')
+			}
+			pathBuilder.WriteByte('"')
+			pathBuilder.WriteString(field)
+			pathBuilder.WriteByte('"')
+		}
+		pathBuilder.WriteByte(']')
+		pathJSON := pathBuilder.String()
+
 		refetch = fmt.Sprintf(`
 
     "refetch": {
@@ -331,14 +379,14 @@ func GenerateSelectionDocument(
         "mode": "%s"
     },
 `,
-			"["+flags.Refetch.Path[1:]+"]",
-			flags.Refetch.Method,
-			flags.Refetch.PageSize,
-			flags.Refetch.Embedded,
-			flags.Refetch.TargetType,
-			flags.Refetch.Paginated,
-			flags.Refetch.Direction,
-			flags.Refetch.Mode,
+			pathJSON,
+			refetchSpec.Method,
+			refetchSpec.PageSize,
+			refetchSpec.Embedded,
+			refetchSpec.TargetType,
+			refetchSpec.Paginated,
+			refetchSpec.Direction,
+			refetchSpec.Mode,
 		)
 	}
 
@@ -356,23 +404,42 @@ func GenerateSelectionDocument(
     "enableLoadingState": "%s",`, flags.HasLoading)
 	}
 
+	// compute the type definitions
+	typeDefs, imports, err := typescript.GenerateDocumentTypeDefs(
+		ctx,
+		db,
+		conn,
+		rootTypes,
+		docs,
+		doc,
+	)
+	if err != nil {
+		return "", err
+	}
+
 	result := strings.TrimSpace(fmt.Sprintf(`
-export default {
+%s
+const artifact = {
     "name": "%s",
     "kind": "%s",
     "hash": "%s",%s
     "raw": `+"`"+printed+"\n`"+`,
 
     "rootType": "%s",
-    "stripVariables": %s,
+    "stripVariables": %s as Array<string>,
 
     "selection": %s,
 
     "pluginData": %s,%s%s%s%s%s%s%s
 } as const
 
+export default artifact
+
+%s
+
 "HoudiniHash=%s"
   `,
+		strings.Join(imports, "\n"),
 		name,
 		kind,
 		hash,
@@ -388,6 +455,7 @@ export default {
 		policyValue,
 		partialValue,
 		optimistic,
+		typeDefs,
 		hash,
 	))
 
@@ -413,8 +481,15 @@ func getDocumentData(
 	// the query that looks up the printed value needs a whereIn for every referenced document
 	whereIn := strings.Join(dependentDocs, ", ")
 
+	// fetch document content from database
 	query, err := conn.Prepare(fmt.Sprintf(`
-    SELECT printed, name, hash FROM documents WHERE name in (%s) ORDER BY name
+    SELECT
+      documents.printed,
+      documents.name,
+      documents.hash
+    FROM documents
+    WHERE documents.name in (%s)
+    ORDER BY documents.name
   `, whereIn))
 	if err != nil {
 		return d, err
@@ -422,6 +497,7 @@ func getDocumentData(
 	defer query.Finalize()
 
 	var printedBuilder strings.Builder
+
 	err = db.StepStatement(ctx, query, func() {
 		printedBuilder.WriteString(query.GetText("printed"))
 		printedBuilder.WriteString("\n\n")
@@ -436,8 +512,52 @@ func getDocumentData(
 	// compute hash based on the complete printed content (including dependencies)
 	d.Hash = fmt.Sprintf("%x", sha256.Sum256([]byte(d.Printed)))
 
+	// get refetch data from collected document if available
+	if collectedDoc := docs.Selections[name]; collectedDoc != nil {
+		d.Refetch = collectedDoc.Refetch
+	}
+
 	// we're done
 	return d, nil
+}
+
+// PathBuilder provides memory-efficient path building with backtracking
+type PathBuilder struct {
+	path []string
+}
+
+// NewPathBuilder creates a new path builder with optional initial capacity
+func NewPathBuilder(initialCap int) *PathBuilder {
+	return &PathBuilder{
+		path: make([]string, 0, initialCap),
+	}
+}
+
+// Push adds a field to the current path
+func (pb *PathBuilder) Push(field string) {
+	pb.path = append(pb.path, field)
+}
+
+// Pop removes the last field from the current path
+func (pb *PathBuilder) Pop() {
+	if len(pb.path) > 0 {
+		pb.path = pb.path[:len(pb.path)-1]
+	}
+}
+
+// Current returns a copy of the current path (only when needed for RefetchSpec)
+func (pb *PathBuilder) Current() []string {
+	if len(pb.path) == 0 {
+		return []string{}
+	}
+	result := make([]string, len(pb.path))
+	copy(result, pb.path)
+	return result
+}
+
+// Len returns the current path depth
+func (pb *PathBuilder) Len() int {
+	return len(pb.path)
 }
 
 func stringifySelection(
@@ -451,7 +571,7 @@ func stringifySelection(
 	parentSelectionFlags *SelectionFlags,
 	paginatedMode *string,
 	updates []string,
-	path string,
+	pathBuilder *PathBuilder,
 	forceLoading bool,
 ) string {
 	indent := strings.Repeat(spacing, level)
@@ -503,6 +623,9 @@ func stringifySelection(
 				}
 			}
 
+			// push current field to path, process, then pop
+			pathBuilder.Push(*selection.Alias)
+
 			fieldsBuilder.WriteString(stringifyFieldSelection(
 				projectConfig,
 				docs,
@@ -512,9 +635,12 @@ func stringifySelection(
 				flags,
 				parentSelectionFlags,
 				updates,
-				path+`,"`+*selection.Alias+`"`,
+				pathBuilder,
 				forceLoading,
 			))
+
+			// pop the field we just processed
+			pathBuilder.Pop()
 
 		case "fragment":
 			// the applied fragment might have arguments
@@ -618,7 +744,7 @@ func stringifySelection(
 							flags,
 							parentSelectionFlags,
 							[]string{},
-							path,
+							pathBuilder,
 							forceLoading,
 						))
 					}
@@ -762,7 +888,11 @@ func stringifySelection(
 
 func keyField(field *collected.Selection, paginatedMode *string) string {
 	if len(field.Arguments) == 0 {
-		return `"` + *field.Alias + `"`
+		paginationSuffix := ""
+		if paginatedMode != nil {
+			paginationSuffix = "::paginated"
+		}
+		return `"` + *field.Alias + paginationSuffix + `"`
 	}
 
 	// if we are generating the key for a paginated field then we need to strip away
@@ -786,6 +916,7 @@ func keyField(field *collected.Selection, paginatedMode *string) string {
 		a := *arg
 		args = append(args, &a)
 	}
+
 	paginationSuffix := ""
 	if paginatedMode != nil {
 		paginationSuffix = "::paginated"
@@ -809,7 +940,7 @@ func stringifyFieldSelection(
 	flags *ArtifactFlags,
 	parentSelectionFlags *SelectionFlags,
 	updates []string,
-	path string,
+	pathBuilder *PathBuilder,
 	forceLoading bool,
 ) string {
 	indent3 := strings.Repeat(spacing, level+2)
@@ -831,11 +962,20 @@ func stringifyFieldSelection(
 			updates = append(updates, "prepend")
 		}
 
-		// if the list is paginated then it requires a refetch spec
-		if selection.List.Paginated {
+		if selection.List != nil {
+			// use the computed path for list operations (both paginated and non-paginated)
+			currentPath := pathBuilder.Current()
+
+			// For list fields (both @list and @paginate), ensure the field is included in the path
+			// This handles cases where fragments don't include the field in the path
+			fullPath := currentPath
+			if len(currentPath) == 0 || currentPath[len(currentPath)-1] != *selection.Alias {
+				fullPath = append(currentPath, *selection.Alias)
+			}
+
 			flags.Refetch = &RefetchSpec{
-				Path:       path,
-				Paginated:  selection.List.Paginated,
+				Path:       fullPath,                 // use the corrected path
+				Paginated:  selection.List.Paginated, // true for @paginate, false for @list
 				PageSize:   selection.List.PageSize,
 				Mode:       RefetchMode(selection.List.Mode),
 				TargetType: selection.List.TargetType,
@@ -947,7 +1087,7 @@ func stringifyFieldSelection(
 				selectionFlags,
 				paginatedMode,
 				subSelUpdates,
-				path,
+				pathBuilder,
 				forceLoading,
 			),
 		)
@@ -1038,18 +1178,20 @@ func stringifyFieldSelection(
 					}
 				}
 			case "fragment":
-				definition := docs.Selections[child.FieldName]
-				for _, definitionDirective := range definition.Directives {
-					if definitionDirective.Name == graphql.RequiredDirective {
-						isNullable = true
-						childHasRequired = true
-					}
-				}
-				for _, subSel := range definition.Selections {
-					for _, childDirective := range subSel.Directives {
-						if childDirective.Name == graphql.RequiredDirective {
+				definition, ok := docs.Selections[child.FieldName]
+				if ok {
+					for _, definitionDirective := range definition.Directives {
+						if definitionDirective.Name == graphql.RequiredDirective {
 							isNullable = true
 							childHasRequired = true
+						}
+					}
+					for _, subSel := range definition.Selections {
+						for _, childDirective := range subSel.Directives {
+							if childDirective.Name == graphql.RequiredDirective {
+								isNullable = true
+								childHasRequired = true
+							}
 						}
 					}
 				}
@@ -1090,7 +1232,7 @@ func stringifyFieldSelection(
 
 		// we also need to record which filters are currently being applied to the list field
 		for _, arg := range selection.Arguments {
-			value := printValue(arg.Value, map[string]bool{})
+			value := stringifyValue(arg.Value, map[string]bool{})
 			if arg.Value.Kind == "Variable" {
 				value = `"` + arg.Value.Raw + `"`
 			}
@@ -1292,7 +1434,7 @@ func extractOperation(
 %s"%s": %s,`,
 					indent2,
 					arg.Name,
-					printValue(arg.Value, map[string]bool{}),
+					stringifyValue(arg.Value, map[string]bool{}),
 				)
 			}
 			when += fmt.Sprintf(`
@@ -1309,7 +1451,7 @@ func extractOperation(
 %s"%s": %s,`,
 					indent2,
 					arg.Name,
-					printValue(arg.Value, map[string]bool{}),
+					stringifyValue(arg.Value, map[string]bool{}),
 				)
 			}
 			when += fmt.Sprintf(`
@@ -1422,6 +1564,7 @@ func stripSuffix(s string, suffix string) string {
 func serializeFragmentArgument(arg *collected.ArgumentValue, level int) string {
 	indent0 := strings.Repeat(spacing, level)
 	indent1 := strings.Repeat(spacing, level+1)
+	indent2 := strings.Repeat(spacing, level+2)
 	// the first thing we need to do is figure out the kind
 	var kind string
 	switch arg.Kind {
@@ -1434,7 +1577,14 @@ func serializeFragmentArgument(arg *collected.ArgumentValue, level int) string {
 	// the attributes that define the node depend on the kind
 	attrs := ""
 	switch arg.Kind {
-	case "Variable", "String", "Enum":
+	case "Variable":
+		attrs = fmt.Sprintf(`
+%sname: {
+%s"kind": "Name",
+%s"value": "%s",
+%s},
+%s"value": "%s"`, indent1, indent2, indent2, arg.Raw, indent1, indent1, arg.Raw)
+	case "String", "Enum":
 		attrs = fmt.Sprintf(`
 %s"value": "%s"`, indent1, arg.Raw)
 	case "Int", "Float", "Boolean":
@@ -1487,7 +1637,7 @@ type SelectionFlags struct {
 }
 
 type RefetchSpec struct {
-	Path       string
+	Path       []string
 	Method     RefetchMethod
 	PageSize   int
 	Start      any

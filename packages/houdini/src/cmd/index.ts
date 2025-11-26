@@ -13,6 +13,7 @@ program
 	.command('generate')
 	.description('generate the application runtime')
 	.option('-p, --pull-schema', 'pull the latest schema before generating')
+	.option('-r, --preserve-database', 'preserve any existing generated logic')
 	.option('-o, --output [outputPath]', 'persist queries to a queryMap file')
 	.option(
 		'-h, --headers <headers...>',

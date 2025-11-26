@@ -1,8 +1,11 @@
 <script lang="ts">
-  import { GQL_UpdateUser } from '$houdini';
+  import { UpdateUserStore } from '$houdini';
+  import { stringify } from '$lib/utils/stringify';
+
+  const updateUser = new UpdateUserStore();
 
   async function update() {
-    await GQL_UpdateUser.mutate({
+    await updateUser.mutate({
       id: '6',
       birthDate: new Date('1986-11-07')
     });
@@ -14,5 +17,5 @@
 <button id="mutate" on:click={update}>Update User</button>
 
 <div id="result">
-  {JSON.stringify($GQL_UpdateUser.data)}
+  {stringify($updateUser.data)}
 </div>

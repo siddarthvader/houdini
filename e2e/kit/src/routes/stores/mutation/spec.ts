@@ -1,4 +1,5 @@
-import { sleep, stry } from '../../../lib/utils/helpers.js';
+import { sleep } from '$lib/utils/sleep';
+import { stringify } from '$lib/utils/stringify';
 import { expect, test } from '@playwright/test';
 import { routes } from '../../../lib/utils/routes.js';
 import { expect_to_be, goto, locator_click } from '../../../lib/utils/testsHelper.js';
@@ -16,7 +17,7 @@ test.describe('Mutation Page', () => {
       stale: false,
       source: null
     };
-    await expect_to_be(page, stry(defaultStoreValues) ?? '', '[id="store-value"]');
+    await expect_to_be(page, stringify(defaultStoreValues) ?? '', '[id="store-value"]');
   });
 
   test('Add User + Optimistic + Result', async ({ page }) => {

@@ -1,23 +1,16 @@
 package plugin
 
 import (
+	"code.houdinigraphql.com/packages/houdini-svelte/plugin/config"
 	"code.houdinigraphql.com/plugins"
-	"github.com/spf13/afero"
 )
 
 type HoudiniSvelte struct {
-	plugins.Plugin[PluginConfig]
-	Fs afero.Fs
+	plugins.Plugin[config.PluginConfig]
 }
-
-type PluginConfig = any
 
 func (p *HoudiniSvelte) Name() string {
 	return "houdini-svelte"
-}
-
-func (p *HoudiniSvelte) SetFs(fs afero.Fs) {
-	p.Fs = fs
 }
 
 func (p *HoudiniSvelte) Order() plugins.PluginOrder {

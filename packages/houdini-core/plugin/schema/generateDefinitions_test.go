@@ -16,7 +16,7 @@ import (
 )
 
 func TestDefinitionGeneration(t *testing.T) {
-	tests.RunTable(t, tests.Table[config.PluginConfig]{
+	tests.RunTable(t, tests.Table[config.PluginConfig, *plugin.HoudiniCore]{
 		Tests: []tests.Test[config.PluginConfig]{
 			{
 				Name: "generates runtime definitions for each enum",
@@ -24,7 +24,7 @@ func TestDefinitionGeneration(t *testing.T) {
 					`query TestQuery { version }`,
 				},
 				Extra: map[string]any{
-					"enumsTypesExact": `type ValuesOf<T> = T[keyof T]
+					"enums": `type ValuesOf<T> = T[keyof T]
 
 export declare const TestEnum1: {
     /**
@@ -48,24 +48,6 @@ export declare const TestEnum2: {
 }
 
 export type TestEnum2$options = ValuesOf<typeof TestEnum2>
-
-`,
-					"enumsExact": `export const TestEnum1 = {
-    /**
-     * Documentation of Value1
-    */
-    "Value1": "Value1",
-    /**
-     * Documentation of Value2
-    */
-    "Value2": "Value2"
-};
-
-/** Documentation of testenum2 */
-export const TestEnum2 = {
-    "Value2": "Value2",
-    "Value3": "Value3"
-};
 
 `,
 				},
@@ -174,11 +156,11 @@ enum PaginateMode {
     id
 }
 
-fragment Friends_toggle on User {
+fragment Friends_remove on User {
     id
 }
 
-fragment Friends_remove on User {
+fragment Friends_toggle on User {
     id
 }
 
@@ -208,11 +190,11 @@ fragment Friends_remove on User {
     id
 }
 
-fragment Friends_toggle on User {
+fragment Friends_remove on User {
     id
 }
 
-fragment Friends_remove on User {
+fragment Friends_toggle on User {
     id
 }
 
@@ -221,12 +203,12 @@ fragment theList_insert on CustomIdType {
     bar
 }
 
-fragment theList_toggle on CustomIdType {
+fragment theList_remove on CustomIdType {
     foo
     bar
 }
 
-fragment theList_remove on CustomIdType {
+fragment theList_toggle on CustomIdType {
     foo
     bar
 }
@@ -312,7 +294,6 @@ func performDefinitionsTest(
 	projectConfig, err := p.DB.ProjectConfig(context.Background())
 	require.Nil(t, err)
 
-	checkFileExact(t, p.Fs, projectConfig.DefinitionsEnumTypes(), test.Extra["enumsTypesExact"])
 	checkFileExact(t, p.Fs, projectConfig.DefinitionsEnumRuntime(), test.Extra["enumsExact"])
 	checkFileExact(t, p.Fs, projectConfig.DefinitionsSchemaPath(), test.Extra["schemaExact"])
 	checkFileExact(t, p.Fs, projectConfig.DefinitionsDocumentsPath(), test.Extra["documentsExact"])

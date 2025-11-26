@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { buildPackage, build } from './buildNode.js'
+import { buildPackage, build, copyRuntimeFiles } from './buildNode.js'
 
 // if a package needs to be published as a go script then we need to :
 // - compile the project for every supported os and architecture into a separate directory
@@ -85,6 +85,13 @@ export default async function () {
 				await execCmd('chmod', ['+x', path.join(outputDir, bin)], {})
 			}
 
+      // we can't have any worksapce entries in our dev depenendencies
+      for (const [key, value] of Object.entries(packageJSON.devDependencies || {})) {
+        if (value === 'workspace:^') {
+          delete packageJSON.devDependencies[key]
+        }
+      }
+
 			// next we need to add the package.json file
 			await fs.writeFile(
 				path.join(outputDir, 'package.json'),
@@ -158,7 +165,7 @@ export default async function () {
 		await buildPackage({
 			packageJSONPath,
 			source: packagePath,
-			outDir: path.join(buildDir, packageJSON.name, 'build'),
+			outDir: path.join(buildDir, packageJSON.name),
 		})
 
 		// restore the bin field after buildPackage (only if it was removed)
@@ -172,13 +179,13 @@ export default async function () {
 	} catch (e) {}
 
 	// if there is a runtime directory then we need to handle that too
+	// copy raw .ts files without compilation
 	const runtimeSource = path.join(cwd, 'runtime')
 	try {
 		await fs.access(runtimeSource)
-		await build({
+		await copyRuntimeFiles({
 			outDir: path.join(buildDir, packageJSON.name),
 			source: runtimeSource,
-			bundle: false,
 		})
 	} catch (e) {}
 
@@ -193,7 +200,7 @@ export default async function () {
 		await buildPackage({
 			packageJSONPath,
 			source: vitePath,
-			outDir: path.join(buildDir, packageJSON.name, 'build'),
+			outDir: path.join(buildDir, packageJSON.name),
 		})
 
 		// restore the bin field after buildPackage (only if it was removed)

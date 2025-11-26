@@ -1,17 +1,11 @@
 <script lang="ts">
   import { CachePolicy, graphql } from '$houdini';
+  import type { PageData } from './$types';
+  import { stringify } from '$lib/utils/stringify';
 
-  $: result = graphql(`
-    query BackwardsCursorPaginationQuery @load {
-      usersConnection(last: 2, snapshot: "pagination-query-backwards-cursor") @paginate {
-        edges {
-          node {
-            name
-          }
-        }
-      }
-    }
-  `);
+  export let data: PageData;
+
+  $:({ BackwardsCursorPaginationQuery: result } = data);
 </script>
 
 <div id="result">
@@ -19,7 +13,7 @@
 </div>
 
 <div id="pageInfo">
-  {JSON.stringify($result.pageInfo)}
+  {stringify($result.pageInfo)}
 </div>
 
 <button id="previous" on:click={() => result.loadPreviousPage()}>previous</button>

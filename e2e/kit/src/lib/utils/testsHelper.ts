@@ -1,7 +1,9 @@
 import { routes } from './routes.js';
-import { sleep, stry } from './helpers.js';
+import { sleep } from '$lib/utils/sleep'
 import type { Page, Response } from '@playwright/test';
 import { expect } from '@playwright/test';
+export { stringify } from './stringify.js';
+import { stringify } from './stringify.js';
 
 /**
  *
@@ -61,7 +63,7 @@ export async function expect_n_gql(
       timing.push(new Date().valueOf() - start);
       try {
         const json = await response.json();
-        const str = stry(json, 0);
+        const str = stringify(json, null, 0);
         listStr.push(str as string);
         nbResponse++;
       } catch (error) {
@@ -196,7 +198,7 @@ export async function expect_to_be(
   selector = 'div[id=result]',
   trimed = true
 ) {
-  const result = await page.locator(selector).textContent({ timeout: 2997 });
+  const result = await page.locator(selector).textContent({ timeout: 500 });
   // If the selector is not found, we will get an error: Timeout.
   // It's usually because the page is not loading properly!
   expect(trimed ? result?.trim() : result, `element "${selector}" must BE 👇`).toBe(toBe);
@@ -213,3 +215,4 @@ export async function expectToContain(page: Page, toBe: string, selector = 'div[
 export async function waitForConsole(page: Page, type: 'info' | 'error' = 'info') {
   return await page.waitForEvent('console', { predicate: (msg) => msg.type() === type });
 }
+

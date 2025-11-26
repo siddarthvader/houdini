@@ -1,6 +1,8 @@
+import type { Config } from '../lib/config.js'
 import { format_error } from '../lib/error.js'
 import { codegen_setup, init_db, run_pipeline } from '../lib/index.js'
-import { get_config, type Config } from '../lib/project.js'
+import { get_config } from '../lib/project.js'
+import pull_schema from './pullSchema.js'
 
 export async function generate(
 	args: {
@@ -11,11 +13,13 @@ export async function generate(
 		log?: string
 		verbose: boolean
 		mode?: string
+		preserveDatabase: boolean
 	} = {
 		pullSchema: false,
 		headers: [],
 		verbose: false,
-	},
+		preserveDatabase: false,
+	}
 ) {
 	// make sure there is always a mode
 	const mode = args.mode ?? 'development'
@@ -23,19 +27,19 @@ export async function generate(
 	// until we've initialized the pipeline, there's nothing to do on close
 	let on_close = () => {}
 
+	// make sure we pull the schema if we specify
+	if (args.pullSchema) {
+		await pull_schema({ headers: args.headers, output: args.output })
+	}
+
 	try {
 		// grab the config file
 		let config: Config | null = await get_config()
 
-		const [db, dbFilepath] = await init_db(config)
+		const [db, dbFilepath] = await init_db(config, args.preserveDatabase)
 
 		// initialize the codegen pipe
-		const { trigger_hook, close } = await codegen_setup(
-			config,
-			mode,
-			db,
-			dbFilepath,
-		)
+		const { trigger_hook, close } = await codegen_setup(config, mode, db, dbFilepath)
 
 		// Function to handle graceful shutdown
 		on_close = async () => {

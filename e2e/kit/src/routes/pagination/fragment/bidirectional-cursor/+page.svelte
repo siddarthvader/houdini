@@ -1,13 +1,11 @@
 <script lang="ts">
   import { CachePolicy, graphql, paginatedFragment } from '$houdini';
+  import type { PageData } from './$types'
+  import { stringify } from '$lib/utils/stringify';
 
-  $: queryResult = graphql(`
-    query UserFragmentBidirectionalCursorQuery @load {
-      user(id: "1", snapshot: "pagination-fragment-backwards-cursor") {
-        ...BidirectionalCursorFragment
-      }
-    }
-  `);
+  export let data: PageData;
+
+  $:({ UserFragmentBidirectionalCursorQuery: queryResult } = data);
 
   $: fragmentResult = paginatedFragment(
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -31,7 +29,7 @@
 </div>
 
 <div id="pageInfo">
-  {JSON.stringify($fragmentResult.pageInfo)}
+  {stringify($fragmentResult.pageInfo)}
 </div>
 
 <button id="previous" on:click={() => fragmentResult.loadPreviousPage()}>previous</button>
