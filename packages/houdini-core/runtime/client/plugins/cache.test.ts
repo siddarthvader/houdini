@@ -1,6 +1,6 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 
-import { testConfigFile } from '../../../test'
+import { testConfigFile } from 'houdini/test'
 import { Cache } from '../../cache/cache'
 import { CachePolicy, PendingValue } from '../../lib'
 import { setMockConfig } from '../../lib/config'

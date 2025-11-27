@@ -1,6 +1,6 @@
 import { test } from 'vitest'
 
-import { testConfigFile } from '../../../test'
+import { testConfigFile } from 'houdini/test'
 import { Cache } from '../cache'
 
 const config = testConfigFile()

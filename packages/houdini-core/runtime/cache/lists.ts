@@ -364,7 +364,7 @@ export class List {
 		})
 	}
 
-	removeID(id: string, variables: {} = {}, layer?: Layer) {
+	async removeID(id: string, variables: {} = {}, layer?: Layer) {
 		// if there are conditions for this operation
 		if (!this.validateWhen()) {
 			return
@@ -379,7 +379,7 @@ export class List {
 		// if we are removing a record from a connection we have to walk through
 		// some embedded references first
 		if (this.connection) {
-			const { value: embeddedConnection } = this.cache._internal_unstable.storage.get(
+			const { value: embeddedConnection } = await this.cache._internal_unstable.storage.get(
 				this.recordID,
 				this.key
 			)
@@ -390,7 +390,7 @@ export class List {
 
 			// look at every embedded edge for the one with a node corresponding to the element
 			// we want to delete
-			const { value: edges } = this.cache._internal_unstable.storage.get(
+			const { value: edges } = await this.cache._internal_unstable.storage.get(
 				embeddedConnectionID,
 				'edges'
 			)
@@ -402,7 +402,10 @@ export class List {
 				const edgeID = edge as string
 
 				// look at the edge's node
-				const { value: nodeID } = this.cache._internal_unstable.storage.get(edgeID, 'node')
+				const { value: nodeID } = await this.cache._internal_unstable.storage.get(
+					edgeID,
+					'node'
+				)
 				if (!nodeID) {
 					continue
 				}
@@ -417,7 +420,7 @@ export class List {
 		}
 
 		// if the id is not contained in the list, dont notify anyone
-		let value = this.cache._internal_unstable.storage.get(parentID, targetKey)
+		let value = (await this.cache._internal_unstable.storage.get(parentID, targetKey))
 			.value as NestedList
 		if (!value || !value.includes(targetID)) {
 			return
@@ -522,19 +525,18 @@ export class List {
 
 	// iterating over the list handler should be the same as iterating over
 	// the underlying linked list
-	*[Symbol.iterator]() {
+	async *[Symbol.iterator]() {
 		let entries: string[] = []
 
 		// grab the underlying value from the cache
-		let value = this.cache._internal_unstable.storage.get(this.recordID, this.key).value as
-			| NestedList
-			| string
+		let value = (await this.cache._internal_unstable.storage.get(this.recordID, this.key))
+			.value as NestedList | string
 
 		if (!this.connection) {
 			entries = flatten(value as NestedList)
 		} else {
 			// connections need to reference the edges field for the list of entries
-			entries = this.cache._internal_unstable.storage.get(value as string, 'edges')
+			entries = (await this.cache._internal_unstable.storage.get(value as string, 'edges'))
 				.value as string[]
 		}
 
@@ -569,8 +571,8 @@ export class ListCollection {
 
 	removeID(...args: Parameters<List['removeID']>) {
 		let removed = false
-		this.lists.forEach((list) => {
-			if (list.removeID(...args)) {
+		this.lists.forEach(async(list) => {
+			if (await list.removeID(...args)) {
 				removed = true
 			}
 		})

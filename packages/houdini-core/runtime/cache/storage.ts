@@ -74,15 +74,15 @@ export class InMemoryStorage {
 			layer.replaceID(replacement)
 		}
 	}
-	get(
+	async get(
 		targetID: string,
 		field: string,
 		defaultValue?: any
-	): {
+	): Promise<{
 		value: GraphQLField
 		kind: 'link' | 'scalar' | 'unknown'
 		displayLayers: number[]
-	} {
+	}> {
 		// the list of operations for the field
 		const operations = {
 			[OperationKind.insert]: {
@@ -104,7 +104,7 @@ export class InMemoryStorage {
 			// consider every id that we know about
 			for (const id of recordIDs) {
 				const layer = this.data[i]
-				let [layerValue, kind] = layer.get(id, field)
+				let [layerValue, kind] = await layer.get(id, field)
 
 				const layerOperations = layer.getOperations(id, field) || []
 				layer.deletedIDs.forEach((v) => {
@@ -121,7 +121,7 @@ export class InMemoryStorage {
 				// if we don't have a value to return, we're done
 				if (typeof layerValue === 'undefined' && defaultValue) {
 					const targetLayer = this.topLayer
-					targetLayer.writeField(id, field, defaultValue)
+					await targetLayer.writeField(id, field, defaultValue)
 					layerValue = defaultValue
 				}
 
@@ -208,12 +208,12 @@ export class InMemoryStorage {
 		}
 	}
 
-	writeLink(id: string, field: string, value: string | NestedList) {
+	async writeLink(id: string, field: string, value: string | NestedList): Promise<LayerID> {
 		// write to the top most layer
 		return this.topLayer.writeLink(id, field, value)
 	}
 
-	writeField(id: string, field: string, value: GraphQLValue) {
+	async writeField(id: string, field: string, value: GraphQLValue): Promise<LayerID> {
 		return this.topLayer.writeField(id, field, value)
 	}
 
@@ -352,7 +352,7 @@ export class Layer {
 		this.id = id
 	}
 
-	get(id: string, field: string): [GraphQLField, 'link' | 'scalar'] {
+	async get(id: string, field: string): Promise<[GraphQLField, 'link' | 'scalar']> {
 		// if its a link return the value
 		if (typeof this.links[id]?.[field] !== 'undefined') {
 			return [this.links[id][field], 'link']
@@ -379,7 +379,7 @@ export class Layer {
 		}
 	}
 
-	writeField(id: string, field: string, value: GraphQLField): LayerID {
+	async writeField(id: string, field: string, value: GraphQLField): Promise<LayerID> {
 		this.fields[id] = {
 			...this.fields[id],
 			[field]: value,
@@ -388,7 +388,7 @@ export class Layer {
 		return this.id
 	}
 
-	writeLink(id: string, field: string, value: null | string | NestedList): LayerID {
+	async writeLink(id: string, field: string, value: null | string | NestedList): Promise<LayerID> {
 		// if any of the values in this link are flagged to be deleted, undelete it
 		const valueList = Array.isArray(value) ? value : [value]
 		for (const value of flatten(valueList)) {
@@ -515,7 +515,7 @@ export class Layer {
 		})
 	}
 
-	writeLayer(layer: Layer): void {
+	async writeLayer(layer: Layer): Promise<void> {
 		// if we are merging into ourselves, we're done
 		if (layer.id === this.id) {
 			return
@@ -555,7 +555,7 @@ export class Layer {
 			}
 			// we do have a record matching this id, copy the individual fields
 			for (const [field, value] of Object.entries(values)) {
-				this.writeField(id, field, value)
+				await this.writeField(id, field, value)
 			}
 		}
 

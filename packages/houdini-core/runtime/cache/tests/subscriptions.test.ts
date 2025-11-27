@@ -1,6 +1,6 @@
 import { test, expect, vi } from 'vitest'
 
-import { testConfigFile } from '../../../test'
+import { testConfigFile } from 'houdini/test'
 import type { SubscriptionSelection } from '../../lib'
 import { RefetchUpdateMode } from '../../lib'
 import { Cache } from '../cache'

@@ -3,21 +3,28 @@ import { test, expect, describe } from 'vitest'
 import { InMemoryStorage, OperationLocation } from '../storage'
 
 describe('in memory layers', function () {
-	test('first layer written can be looked up', function () {
+	test('first layer written can be looked up', async function () {
 		// instantiate an storage layer with an in-memory layer
 		const storage = new InMemoryStorage()
 
 		// create the layer and write some data
 		const layer = storage.createLayer()
-		layer.writeField('User:1', 'firstName', 'John')
+    const layer1 = storage.createLayer()
 
+
+		layer.writeField('User:1', 'firstName', 'John')
+    layer1.writeField('User:2', 'firstName', 'CENA')
+		const layerID = storage.writeLink('User:3', 'bestFriend', 'User:2')
+
+
+    console.log(layer1)
 		// can get the data back
-		expect(storage.get('User:1', 'firstName')).toEqual({
+		expect(await storage.get('User:1', 'firstName')).toEqual({
 			value: 'John',
 			displayLayers: [layer.id],
 			kind: 'scalar',
 		})
-		expect(storage.layerCount).toEqual(1)
+		expect(storage.layerCount).toEqual(2)
 	})
 
 	test('non-optimistic layer overwrites base', function () {
