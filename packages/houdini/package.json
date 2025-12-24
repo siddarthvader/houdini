@@ -16,6 +16,7 @@
     "license": "MIT",
     "type": "module",
     "scripts": {
+        "build": "scripts build-node",
         "compile": "scripts build-node",
         "typedefs": "scripts typedefs"
     },
@@ -115,13 +116,13 @@
             "types": "./build/vite/*",
             "import": "./build/vite/*"
         },
-        "./lib": {
-            "types": "./build/lib/index.d.ts",
-            "import": "./build/lib/index.js"
-        },
         "./cmd": {
             "types": "./build/cmd/index.d.ts",
             "import": "./build/cmd/index.js"
+        },
+        "./lib": {
+            "types": "./build/lib/index.d.ts",
+            "import": "./build/lib/index.js"
         },
         "./runtime/cache": {
             "types": "./build/runtime/cache/index.d.ts",
