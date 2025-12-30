@@ -75,11 +75,6 @@ jobs:
 
             # Per-commit snapshot release - publishes immediately on every commit
             - name: Publish per-commit snapshot release
-              id_tokens:
-                NPM_ID_TOKEN:
-                  aud: "npm:registry.npmjs.org"
-                SIGSTORE_ID_TOKEN:
-                  aud: sigstore
               run: |
                   # Generate unique snapshot version based on commit
                   COMMIT_SHA=$(git rev-parse --short HEAD)
@@ -108,11 +103,6 @@ jobs:
             # Regular changesets release workflow - creates PR or publishes when PR is merged
             - name: Create Release Pull Request or Publish to Registry
               uses: changesets/action@v1
-              id_tokens:
-                NPM_ID_TOKEN:
-                  aud: "npm:registry.npmjs.org"
-                SIGSTORE_ID_TOKEN:
-                  aud: sigstore
               with:
                   version: pnpm run version
                   publish: pnpm run release
