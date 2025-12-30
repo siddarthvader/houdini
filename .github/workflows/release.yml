@@ -9,9 +9,6 @@ on:
             - go
             - main
 
-permissions:
-  id-token: write  # Required for OIDC
-  contents: read
 
 env:
     CI: true
@@ -19,6 +16,9 @@ jobs:
     publish:
         name: Publish Release Version
         runs-on: ubuntu-22.04
+        permissions:
+          id-token: write  # Required for OIDC
+          contents: read
         steps:
             - name: Creating .npmrc
               run: |
