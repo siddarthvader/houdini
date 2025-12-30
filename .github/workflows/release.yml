@@ -1,16 +1,19 @@
 name: Release
 
-# keep the changelog up to date on every commit to main
+# Trigger releases on pushes to release branches
+# Supports both regular releases and prereleases based on .changeset/pre.json
 on:
     push:
         branches:
+            - houdini-2.0
+            - go
             - main
 
 env:
     CI: true
 jobs:
     publish:
-        name: Publish
+        name: Publish Release Version
         runs-on: ubuntu-22.04
         steps:
             - name: Creating .npmrc
@@ -33,7 +36,7 @@ jobs:
             - name: Install Node.js
               uses: actions/setup-node@v3
               with:
-                node-version: 20.13.1
+                node-version: 24
 
             - uses: pnpm/action-setup@v2.0.1
               name: Install pnpm
@@ -52,13 +55,66 @@ jobs:
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Create Release Pull Request or Deploy
+            # Check if we're in prerelease mode
+            - name: Check prerelease mode
+              id: prerelease-check
+              run: |
+                  if [ -f ".changeset/pre.json" ]; then
+                    echo "is_prerelease=true" >> $GITHUB_OUTPUT
+                    echo "title=🚧 Prerelease Version Update" >> $GITHUB_OUTPUT
+                    echo "commit=🚧 v{VERSION}" >> $GITHUB_OUTPUT
+                  else
+                    echo "is_prerelease=false" >> $GITHUB_OUTPUT
+                    echo "title=📦 Release Version Update" >> $GITHUB_OUTPUT
+                    echo "commit=📦 v{VERSION}" >> $GITHUB_OUTPUT
+                  fi
+
+            # Per-commit snapshot release - publishes immediately on every commit
+            - name: Publish per-commit snapshot release
+              id_tokens:
+                NPM_ID_TOKEN:
+                  aud: "npm:registry.npmjs.org"
+                SIGSTORE_ID_TOKEN:
+                  aud: sigstore
+              run: |
+                  # Generate unique snapshot version based on commit
+                  COMMIT_SHA=$(git rev-parse --short HEAD)
+                  SNAPSHOT_TAG="commit-${COMMIT_SHA}"
+                  echo "Publishing snapshot release with tag: $SNAPSHOT_TAG"
+
+                  # Create a clean working directory for snapshot
+                  git stash --include-untracked || true
+
+                  # Apply snapshot version to all packages
+                  pnpm changeset version --snapshot $SNAPSHOT_TAG
+
+                  # Build all packages
+                  pnpm run build
+
+                  # Publish snapshot without git tags
+                  pnpm changeset publish --no-git-tag --snapshot --tag $SNAPSHOT_TAG
+
+                  # Restore working directory
+                  git reset --hard HEAD
+                  git stash pop || true
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+            # Regular changesets release workflow - creates PR or publishes when PR is merged
+            - name: Create Release Pull Request or Publish to Registry
               uses: changesets/action@v1
+              id_tokens:
+                NPM_ID_TOKEN:
+                  aud: "npm:registry.npmjs.org"
+                SIGSTORE_ID_TOKEN:
+                  aud: sigstore
               with:
                   version: pnpm run version
                   publish: pnpm run release
-                  title: '📦 Version Update'
-                  commit: '📦 v{VERSION}'
+                  title: ${{ steps.prerelease-check.outputs.title }}
+                  commit: ${{ steps.prerelease-check.outputs.commit }}
+                  createGithubReleases: true
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
