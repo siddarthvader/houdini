@@ -27,6 +27,7 @@
         "@types/minimatch": "^5.1.2",
         "@types/node": "^22.13.1",
         "@types/ungap__structured-clone": "^0.3.0",
+        "@types/ws": "^8.18.1",
         "kleur": "^4.1.5",
         "prettier": "^2.8.3",
         "rollup": "^4.28.1",
@@ -58,7 +59,8 @@
         "minimatch": "^5.1.0",
         "node-fetch": "^3.2.10",
         "npx-import": "^1.1.3",
-        "recast": "^0.23.1"
+        "recast": "^0.23.1",
+        "ws": "^8.18.0"
     },
     "peerDependencies": {
         "vite": "^5.3.3"
@@ -128,9 +130,21 @@
             "types": "./build/runtime/cache/index.d.ts",
             "import": "./build/runtime/cache/index.js"
         },
-        "./lib/router": {
-            "types": "./build/lib/router/index.d.ts",
-            "import": "./build/lib/router/index.js"
+        "./runtime-esm/client/utils": {
+            "types": "./build/runtime-esm/client/utils/index.d.ts",
+            "import": "./build/runtime-esm/client/utils/index.js"
+        },
+        "./runtime-esm/client/plugins": {
+            "types": "./build/runtime-esm/client/plugins/index.d.ts",
+            "import": "./build/runtime-esm/client/plugins/index.js"
+        },
+        "./runtime-cjs/client/utils": {
+            "types": "./build/runtime-cjs/client/utils/index.d.ts",
+            "import": "./build/runtime-cjs/client/utils/index.js"
+        },
+        "./runtime-cjs/client/plugins": {
+            "types": "./build/runtime-cjs/client/plugins/index.d.ts",
+            "import": "./build/runtime-cjs/client/plugins/index.js"
         },
         "./runtime/types": {
             "types": "./build/runtime/types.d.ts",

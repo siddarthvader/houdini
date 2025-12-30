@@ -5,10 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
+	"strings"
 	"sync"
+	"time"
 
 	"zombiezen.com/go/sqlite"
 )
@@ -43,12 +44,6 @@ func TriggerHookSerial[PluginConfig any](
 		return map[string]any{}, nil
 	}
 
-	// marshal the payload once
-	marshaled, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
 	errs := &ErrorList{}
 
 	for name, port := range pluginPorts {
@@ -56,25 +51,9 @@ func TriggerHookSerial[PluginConfig any](
 			continue
 		}
 
-		resp, err := http.Post(
-			fmt.Sprintf("http://localhost:%v/%s", port, hook),
-			"application/json",
-			bytes.NewBuffer(marshaled),
-		)
+		pluginResult, err := invokeHook(ctx, name, port, hook, payload)
 		if err != nil {
 			errs.Append(WrapError(err))
-			continue
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			errs.Append(WrapError(err))
-			continue
-		}
-
-		var pluginResult map[string]any
-		if err := json.Unmarshal(body, &pluginResult); err != nil {
 			continue
 		}
 
@@ -120,12 +99,6 @@ func TriggerHookParallel[PluginConfig any](
 		return map[string]any{}, nil
 	}
 
-	// marshal the payload once
-	marshaled, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
 	errs := &ErrorList{}
 	var wg sync.WaitGroup
 
@@ -138,25 +111,9 @@ func TriggerHookParallel[PluginConfig any](
 				return
 			}
 
-			resp, err := http.Post(
-				fmt.Sprintf("http://localhost:%v/%s", port, hook),
-				"application/json",
-				bytes.NewBuffer(marshaled),
-			)
+			pluginResult, err := invokeHook(ctx, name, port, hook, payload)
 			if err != nil {
 				errs.Append(WrapError(err))
-				return
-			}
-			defer resp.Body.Close()
-
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				errs.Append(WrapError(err))
-				return
-			}
-
-			var pluginResult map[string]any
-			if err := json.Unmarshal(body, &pluginResult); err != nil {
 				return
 			}
 
@@ -171,6 +128,63 @@ func TriggerHookParallel[PluginConfig any](
 
 	if errs.Len() > 0 {
 		return result, errs
+	}
+
+	return result, nil
+}
+
+func invokeHook(
+	ctx context.Context,
+	name string,
+	port int64,
+	hook string,
+	payload map[string]any,
+) (map[string]any, error) {
+	// hook url is just name of hook 
+	endpoint := "/" + strings.ToLower(hook)
+	url := fmt.Sprintf("http://localhost:%d%s", port, endpoint)
+
+	var body []byte
+	var err error
+
+	if payload != nil && len(payload) > 0 {
+		body, err = json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request for plugin %s: %w", name, err)
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request for plugin %s: %w", name, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	if taskID := TaskIDFromContext(ctx); taskID != nil {
+		req.Header.Set("X-Task-Id", *taskID)
+	}
+	if pluginDir := PluginDirFromContext(ctx); pluginDir != "" {
+		req.Header.Set("X-Plugin-Directory", pluginDir)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request to plugin %s: %w", name, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err == nil {
+			return nil, fmt.Errorf("plugin %s returned error: %v", name, errResp)
+		}
+		return nil, fmt.Errorf("plugin %s returned status %d", name, resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return map[string]any{}, nil
 	}
 
 	return result, nil

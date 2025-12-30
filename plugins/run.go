@@ -10,9 +10,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
@@ -55,11 +57,44 @@ func Run[PluginConfig any](plugin HoudiniPlugin[PluginConfig]) error {
 	db.ReloadPluginConfig(ctx)
 	db.ReloadProjectConfig(ctx)
 
-	hooks := pluginHooks(ctx, plugin)
+	// register hooks for both HTTP and WebSocket together
+	httpRegistered := map[string]struct{}{}
+	hooks := registerPluginHooks(plugin, func(hookName string, handler HookHandler) {
+		// HTTP connection
+		path := "/" + strings.ToLower(hookName)
+		if _, ok := httpRegistered[path]; !ok {
+			http.Handle(path, wrapHandler(handler))
+			httpRegistered[path] = struct{}{}
+		}
+		// WebSocket connection
+		registerWSHandler(hookName, handler)
+	})
+
 	hooksStr, err := json.Marshal(hooks)
 	if err != nil {
 		return fmt.Errorf("failed to marshal hooks: %w", err)
 	}
+
+	// obtain a websocket upgrader
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+
+	// register WebSocket handler
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		// upgrade to websocket
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Printf("WebSocket upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+		HandleWebSocketConnection(conn)
+	})
 
 	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
@@ -153,7 +188,7 @@ func Run[PluginConfig any](plugin HoudiniPlugin[PluginConfig]) error {
 				`
 					INSERT INTO plugins (
 						name, hooks, port, plugin_order, include_runtime, config_module, client_plugins
-					) VALUES 
+					) VALUES
 						(?, ?, ?, ?, ?, ?, ?)
 				`,
 				&sqlitex.ExecOptions{

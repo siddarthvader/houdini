@@ -2,7 +2,17 @@ package plugins
 
 import (
 	"context"
+
+	"github.com/gorilla/websocket"
 )
+
+type taskIDCtxKey struct{}
+
+type pluginDirCtxKey struct{}
+
+type wsConnCtxKey struct{}
+
+type wsMessageIDCtxKey struct{}
 
 func ContextWithTaskID(ctx context.Context, taskID string) context.Context {
 	if taskID == "" {
@@ -28,6 +38,29 @@ func PluginDirFromContext(ctx context.Context) string {
 	return ctx.Value(pluginDirCtxKey{}).(string)
 }
 
-type taskIDCtxKey struct{}
+func ContextWithWSConn(ctx context.Context, conn *websocket.Conn) context.Context {
+	return context.WithValue(ctx, wsConnCtxKey{}, conn)
+}
 
-type pluginDirCtxKey struct{}
+// WSConnFromContext helper to get the conn from context
+// Example:
+//  	if conn := WSConnFromContext(ctx); conn != nil {
+// 			conn.WriteJSON(WebSocketResponse{
+// 				ID:    ctx.Value("wsMessageID").(string),
+// 				Type:  "1error",
+// 				Error: "TEST: This is a simulated non-fatal error during generation",
+// 			})
+// 		}
+func WSConnFromContext(ctx context.Context) *websocket.Conn {
+	conn, _ := ctx.Value(wsConnCtxKey{}).(*websocket.Conn)
+	return conn
+}
+
+func ContextWithWSMessageID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, wsMessageIDCtxKey{}, id)
+}
+
+func WSMessageIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(wsMessageIDCtxKey{}).(string)
+	return id
+}

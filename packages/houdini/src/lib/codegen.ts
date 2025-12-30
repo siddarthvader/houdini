@@ -1,11 +1,13 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import path from 'node:path'
 import sqlite, { type DatabaseSync } from 'node:sqlite'
+import { WebSocket } from 'ws'
 
 import * as conventions from '../router/conventions.js'
 import type { Config } from './config.js'
 import { create_schema, write_config } from './database.js'
-import { format_hook_error, type HookError } from './error.js'
+import type { HookError } from './error.js'
+import { format_hook_error } from './error.js'
 import * as fs from './fs.js'
 import type { ProjectManifest } from './types'
 
@@ -207,48 +209,126 @@ export async function codegen_setup(
 
 	console.timeEnd('Start Plugins')
 
+	const wsConnections = new Map<string, WebSocket>()
+	let messageCounter = 0
+	const pendingRequests = new Map<
+		string,
+		{
+			resolve: (value: any) => void
+			reject: (reason: any) => void
+			timeout: NodeJS.Timeout
+			hook: string
+		}
+	>()
+
+	async function getOrCreateWS(name: string, port: number): Promise<WebSocket> {
+		const existing = wsConnections.get(name)
+		if (existing && existing.readyState === WebSocket.OPEN) {
+			return existing
+		}
+
+		return new Promise((resolve, reject) => {
+			// get a new connection
+			const wsUrl = `ws://localhost:${port}/ws`
+			const ws = new WebSocket(wsUrl)
+
+			ws.on('open', () => {
+				// clear any pending requests
+				wsConnections.set(name, ws)
+				return resolve(ws)
+			})
+
+			// Set up message handler for this connection
+			ws.on('message', (data: Buffer) => {
+				try {
+					const response = JSON.parse(data.toString())
+					const pending = pendingRequests.get(response.id)
+					if (!pending) return
+
+					clearTimeout(pending.timeout)
+					pendingRequests.delete(response.id)
+
+					switch (response.type) {
+						case 'error':
+							// Non-fatal error - log and continue listening
+							console.error(`!   [${name}] ${response.error}`)
+							pending.reject(new Error(`${name}: ${response.error}`))
+							break
+
+						case 'response':
+							if (response.error) {
+								// Handle errors like the old HTTP implementation
+								const errors: HookError[] = Array.isArray(response.error)
+									? response.error
+									: [response.error]
+
+								errors.forEach((error) => {
+									format_hook_error(config.root_dir, error, name, pending.hook)
+								})
+
+								pending.reject(new Error(`Failed to call ${name}`))
+							} else {
+								pending.resolve(response.result)
+							}
+							break
+
+						default:
+							console.warn(`[${name}] Unknown message type: ${response.type}`)
+							pending.reject(new Error(`Unknown message type: ${response.type}`))
+					}
+				} catch (err) {
+					// if parsing the message fails, then we are not sure which pending request it belongs to
+					// just log and move on
+					console.error(`Error processing WebSocket message for ${name}:`, err)
+				}
+			})
+
+			ws.on('error', (err: Error) => {
+				console.error(`WebSocket error for ${name}:`, err)
+				wsConnections.delete(name)
+				reject(new Error(`WebSocket error for ${name}: ${err}`))
+			})
+
+			ws.on('close', () => {
+				// Remove from pool so next request creates new connection
+				// requests will eventually timeout and be rejected, we can agressively remove them but it's not a big deal
+				wsConnections.delete(name)
+			})
+		})
+	}
+
 	const invoke_hook = async (
 		name: string,
 		hook: string,
 		payload: Record<string, any> = {},
 		task_id?: string
-	) => {
+	): Promise<any> => {
 		const plugin = plugin_specs.find((spec) => spec.name === name)
 		if (!plugin) {
-			throw new Error(`unknkown plugin: ${name}`)
+			throw new Error(`unknown plugin: ${name}`)
 		}
 		const { port, directory } = plugin
+		const ws = await getOrCreateWS(name, port)
 
-		// make the request
-		const response = await fetch(`http://localhost:${port}/${hook.toLowerCase()}`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'X-Task-ID': task_id?.toString() ?? '',
-				'X-Plugin-Directory': directory,
-			},
-			body: JSON.stringify(payload),
-		})
+		return new Promise((resolve, reject) => {
+			const messageId = String(++messageCounter)
 
-		// if the request failed, throw an error
-		if (!response.ok) {
-			if (response.status === 404) {
-				throw new Error(`Plugin ${name} does not support hook ${hook}`)
+			const timeout = setTimeout(() => {
+				pendingRequests.delete(messageId)
+				reject(new Error(`WebSocket request timeout for ${name}/${hook}`))
+			}, 30000)
+			pendingRequests.set(messageId, { resolve, reject, timeout, hook })
+
+			const message = {
+				id: messageId,
+				type: 'request',
+				hook,
+				payload,
+				taskId: task_id,
+				pluginDirectory: directory,
 			}
-			const responseJSON = await response.json()
-			const errors: HookError[] = Array.isArray(responseJSON) ? responseJSON : [responseJSON]
-			errors.forEach((error) => {
-				format_hook_error(config.root_dir, error, name, hook)
-			})
-			// errors
-			throw new Error(`Failed to call ${name}/${hook.toLowerCase()}`)
-		}
-		// look at the response headers, and if the content type is application/json, parse the body
-		const contentType = response.headers.get('content-type')
-		if (contentType && contentType.includes('application/json')) {
-			return await response.json()
-		}
-		return await response.text()
+			ws.send(JSON.stringify(message))
+		})
 	}
 
 	const trigger_hook = async (
@@ -305,6 +385,28 @@ export async function codegen_setup(
 		trigger_hook,
 		run_pipeline: (options: RunPipelineOptions) => run_pipeline(trigger_hook, options),
 		close: async () => {
+			// close ws connections first, this will trigger plugin processes to exit gracefully
+			for (const [name, ws] of wsConnections.entries()) {
+				try {
+					if (ws.readyState === WebSocket.OPEN) {
+						// 1001 (Going Away) signals to plugins they should exit
+						ws.close(1001, 'shutdown')
+					}
+				} catch (err) {
+					console.error(`Error closing WebSocket for ${name}:`, err)
+				}
+			}
+			wsConnections.clear()
+
+			// clear pending requests
+			for (const [, { timeout }] of pendingRequests.entries()) {
+				clearTimeout(timeout)
+			}
+			pendingRequests.clear()
+
+			// give plugins a moment to exit gracefully
+			await new Promise((resolve) => setTimeout(resolve, 100))
+
 			// Close our connection to the database
 			try {
 				db.close()
@@ -329,9 +431,13 @@ export async function codegen_setup(
 						} else {
 							// On Unix-like systems, send SIGINT to the process group
 							try {
-								// The child was spawned with detached: true so that it is its own process group.
+								// Check if process still exists (signal 0 doesn't kill, just checks)
+								process.kill(plugin.process.pid, 0)
+								// Process exists, kill the process group
 								process.kill(-plugin.process.pid, 'SIGINT')
-							} catch (err) {}
+							} catch {
+								// Process already exited from WebSocket close - nothing to do
+							}
 						}
 					}
 				})
@@ -409,6 +515,8 @@ export async function run_pipeline(
 		const opts: any = { task_id }
 
 		// Set parallel_safe for hooks that support it
+		// GenerateRuntime is NOT parallel_safe because houdini-svelte's
+		// UpdateIndexFiles needs to read index.ts that houdini-core creates
 		if (hook === 'Validate' || hook === 'GenerateDocuments') {
 			opts.parallel_safe = true
 		}
