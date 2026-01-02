@@ -85,8 +85,9 @@ jobs:
                   # Build all packages
                   pnpm run build
 
-                  # Publish snapshot without git tags (with provenance)
-                  pnpm changeset publish --no-git-tag --snapshot --tag $SNAPSHOT_TAG
+                  # Publish snapshot using comprehensive release script
+                  echo "Publishing snapshot packages with release script..."
+                  node packages/_scripts/release.js --snapshot --tag=$SNAPSHOT_TAG
 
                   # Restore working directory
                   git reset --hard HEAD
