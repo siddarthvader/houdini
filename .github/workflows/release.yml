@@ -41,12 +41,6 @@ jobs:
             - name: Install dependencies
               run: pnpm install
 
-            - name: Verify NPM Authentication
-              run: |
-                echo "Checking NPM authentication..."
-                npm whoami
-                echo "NPM authentication successful"
-
             - name: Set Git Identity
               run: |
                   git config --global user.name 'github-actions[bot]'
