@@ -30,6 +30,7 @@ jobs:
               with:
                 node-version: 24
                 registry-url: 'https://registry.npmjs.org'
+                always-auth: true
 
             - uses: pnpm/action-setup@v2.0.1
               name: Install pnpm
@@ -39,6 +40,12 @@ jobs:
 
             - name: Install dependencies
               run: pnpm install
+
+            - name: Verify NPM Authentication
+              run: |
+                echo "Checking NPM authentication..."
+                npm whoami
+                echo "NPM authentication successful"
 
             - name: Set Git Identity
               run: |

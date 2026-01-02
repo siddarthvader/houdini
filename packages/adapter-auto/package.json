@@ -17,6 +17,9 @@
     },
     "license": "MIT",
     "type": "module",
+    "publishConfig": {
+        "access": "public"
+    },
     "scripts": {
         "build": "tsup src/* --format esm,cjs  --external vite --minify --dts --clean --out-dir build",
         "build:": "cd ../../ && ((run build && cd -) || (cd - && exit 1))",
