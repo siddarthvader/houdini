@@ -4,8 +4,7 @@
 	"description": "A CLI for creating new Houdini projects",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/HoudiniGraphQL/houdini",
-		"directory": "packages/create-houdini"
+		"url": "https://github.com/HoudiniGraphql/houdini"
 	},
 	"license": "MIT",
 	"homepage": "https://houdinigraphql.com/",
