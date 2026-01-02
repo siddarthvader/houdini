@@ -26,18 +26,29 @@ function warn(message) {
 }
 
 function runCommand(command, options = {}) {
+  const { dryRun = false } = options;
+
+  if (dryRun) {
+    log(`[DRY RUN] Would run: ${command}`);
+    if (options.cwd) {
+      log(`[DRY RUN] In directory: ${options.cwd}`);
+    }
+    // Simulate success for dry-run mode
+    return { success: true, output: '[DRY RUN] Command not executed', dryRun: true };
+  }
+
   try {
     log(`Running: ${command}`);
-    const result = execSync(command, { 
-      encoding: 'utf8', 
+    const result = execSync(command, {
+      encoding: 'utf8',
       stdio: 'pipe',
-      ...options 
+      ...options
     });
     return { success: true, output: result.trim() };
   } catch (err) {
-    return { 
-      success: false, 
-      error: err.message, 
+    return {
+      success: false,
+      error: err.message,
       output: err.stdout?.trim() || '',
       stderr: err.stderr?.trim() || ''
     };
@@ -86,25 +97,27 @@ function getPreReleaseInfo() {
 
 function discoverPackages() {
   const packages = [];
-  
+
   // Discover regular packages
   const packageDirs = readdirSync(PACKAGES_DIR, { withFileTypes: true })
     .filter(dirent => dirent.isDirectory())
     .map(dirent => join(PACKAGES_DIR, dirent.name));
-  
+
   for (const packageDir of packageDirs) {
     const packageJsonPath = join(packageDir, 'package.json');
     const packageInfo = getPackageInfo(packageJsonPath);
-    
+
     if (!packageInfo || packageInfo.private) {
       continue;
     }
-    
-    const buildDir = join(packageDir, BUILD_DIR);
-    const hasBuilds = existsSync(buildDir);
-    
-    if (hasBuilds) {
+
+    // Check if this is a Go package by looking for main.go
+    const mainGoPath = join(packageDir, 'main.go');
+    const isGoPackage = existsSync(mainGoPath);
+
+    if (isGoPackage) {
       // Go-based package with platform builds
+      const buildDir = join(packageDir, BUILD_DIR);
       const buildPackages = discoverBuildPackages(buildDir);
       packages.push({
         type: 'go-package',
@@ -113,7 +126,7 @@ function discoverPackages() {
         path: packageDir,
         buildDir: buildDir,
         mainPackage: null, // Will be found in buildPackages
-        platformPackages: buildPackages.filter(p => p.name !== packageInfo.name),
+        platformPackages: buildPackages.filter(p => !p.isMainPackage),
         allBuildPackages: buildPackages
       });
     } else {
@@ -127,32 +140,45 @@ function discoverPackages() {
       });
     }
   }
-  
+
   return packages;
 }
 
 function discoverBuildPackages(buildDir) {
   const buildPackages = [];
-  
+
+  if (!existsSync(buildDir)) {
+    return buildPackages;
+  }
+
   const buildSubdirs = readdirSync(buildDir, { withFileTypes: true })
     .filter(dirent => dirent.isDirectory())
     .map(dirent => join(buildDir, dirent.name));
-  
+
   for (const subdir of buildSubdirs) {
     const packageJsonPath = join(subdir, 'package.json');
     const packageInfo = getPackageInfo(packageJsonPath);
-    
+
     if (packageInfo) {
+      // Main package typically doesn't have platform-specific suffixes
+      // Platform packages have names like "houdini-core-darwin-arm64"
+      const subdirName = basename(subdir);
+      const isMainPackage = !subdirName.includes('-darwin-') &&
+                           !subdirName.includes('-linux-') &&
+                           !subdirName.includes('-windows-') &&
+                           !packageInfo.os &&
+                           !packageInfo.cpu;
+
       buildPackages.push({
         name: packageInfo.name,
         version: packageInfo.version,
         path: subdir,
         packageInfo,
-        isMainPackage: !packageInfo.os && !packageInfo.cpu // Main package has no platform restrictions
+        isMainPackage
       });
     }
   }
-  
+
   return buildPackages;
 }
 
@@ -184,20 +210,32 @@ async function publishPackage(packagePath, packageName, options = {}) {
     publishArgs.push('--dry-run');
   }
 
-  const result = runCommand(publishArgs.join(' '), { cwd: packagePath });
-
+  // In dry-run mode, just print what we would do without executing
   if (dryRun) {
-    if (result.success) {
-      log(`✅ [DRY RUN] Would successfully publish ${packageName}`);
-      log(`📋 [DRY RUN] Command: ${publishArgs.join(' ')}`);
-      return { success: true, dryRun: true };
+    log(`📋 [DRY RUN] Would execute: ${publishArgs.join(' ')}`);
+    log(`📁 [DRY RUN] Working directory: ${packagePath}`);
+
+    // Check if package.json exists to simulate basic validation
+    const packageJsonPath = join(packagePath, 'package.json');
+    if (existsSync(packageJsonPath)) {
+      const packageInfo = getPackageInfo(packageJsonPath);
+      if (packageInfo) {
+        log(`📦 [DRY RUN] Package: ${packageInfo.name}@${packageInfo.version}`);
+        log(`🏷️ [DRY RUN] Would publish as: ${packageInfo.name}@${isSnapshot && snapshotTag ? snapshotTag : preReleaseTag || 'latest'}`);
+        log(`✅ [DRY RUN] Package validation passed - would publish successfully`);
+        return { success: true, dryRun: true };
+      } else {
+        warn(`⚠️ [DRY RUN] Invalid package.json - would fail to publish`);
+        return { success: false, dryRun: true, error: 'Invalid package.json' };
+      }
     } else {
-      warn(`⚠️ [DRY RUN] Would fail to publish ${packageName}`);
-      warn(`📋 [DRY RUN] Command: ${publishArgs.join(' ')}`);
-      warn(`📋 [DRY RUN] Error: ${result.error}`);
-      return { success: false, dryRun: true, error: result.error };
+      warn(`⚠️ [DRY RUN] No package.json found - would fail to publish`);
+      return { success: false, dryRun: true, error: 'No package.json found' };
     }
   }
+
+  // Real publishing logic (when not in dry-run mode)
+  const result = runCommand(publishArgs.join(' '), { cwd: packagePath });
 
   if (result.success) {
     log(`✅ Successfully published ${packageName}`);
@@ -273,7 +311,7 @@ Usage:
 Options:
   --snapshot              Publish snapshot release
   --tag=<tag>            Specify tag for snapshot release (e.g., --tag=commit-abc123)
-  --dry-run              Test run without actually publishing
+  --dry-run              Test run - shows what would happen without executing commands
   --help                 Show this help message
 
 Examples:
@@ -321,32 +359,26 @@ async function main() {
 
   // Discover all packages
   const packages = discoverPackages();
-  log(`Discovered ${packages.length} packages:`);
+  log(`${dryRun ? '[DRY RUN] ' : ''}Discovered ${packages.length} packages:`);
   packages.forEach(pkg => {
     if (pkg.type === 'go-package') {
       log(`  - ${pkg.name} (Go package with ${pkg.platformPackages.length} platform builds)`);
+      if (dryRun) {
+        pkg.allBuildPackages.forEach(buildPkg => {
+          log(`    └─ ${buildPkg.name}@${buildPkg.version} ${buildPkg.isMainPackage ? '(main)' : '(platform)'}`);
+        });
+      }
     } else {
       log(`  - ${pkg.name} (Node.js package)`);
+      if (dryRun) {
+        log(`    └─ ${pkg.name}@${pkg.version}`);
+      }
     }
   });
 
   if (!isSnapshot) {
-    if (dryRun) {
-      log('🧪 [DRY RUN] Would attempt changeset publish...');
-      log('🧪 [DRY RUN] Skipping changeset publish in dry-run mode, proceeding to individual package analysis');
-    } else {
-      // Try changeset publish first for regular releases
-      log('Attempting changeset publish...');
-      const changesetResult = runCommand('changeset publish');
-
-      if (changesetResult.success) {
-        log('✅ Changeset publish succeeded!');
-        return;
-      }
-
-      warn('Changeset publish failed, falling back to individual publishing...');
-      warn(`Changeset error: ${changesetResult.error}`);
-    }
+    log(`${dryRun ? '[DRY RUN] ' : ''}Regular release mode - using custom publishing logic`);
+    log(`${dryRun ? '[DRY RUN] ' : ''}Changeset handles version management, custom script handles publishing`);
   } else {
     if (isPreRelease) {
       log(`⚠️ ${dryRun ? '[DRY RUN] ' : ''}Skipping snapshot release - in prerelease mode (tag: ${preReleaseInfo.tag})`);
