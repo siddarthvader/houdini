@@ -157,54 +157,72 @@ function discoverBuildPackages(buildDir) {
 }
 
 async function publishPackage(packagePath, packageName, options = {}) {
-  const { isSnapshot = false, snapshotTag = '', preReleaseTag = '', retryOnFailure = true } = options;
-  
-  log(`Publishing ${packageName} from ${packagePath}...`);
-  
+  const { isSnapshot = false, snapshotTag = '', preReleaseTag = '', retryOnFailure = true, dryRun = false } = options;
+
+  log(`${dryRun ? '[DRY RUN] ' : ''}Publishing ${packageName} from ${packagePath}...`);
+
   const publishArgs = ['npm', 'publish', '--access', 'public'];
-  
+
   // Determine which tag to use
   if (isSnapshot && snapshotTag) {
     publishArgs.push('--tag', snapshotTag);
-    log(`Using snapshot tag: ${snapshotTag}`);
+    log(`${dryRun ? '[DRY RUN] ' : ''}Using snapshot tag: ${snapshotTag}`);
   } else if (preReleaseTag) {
     publishArgs.push('--tag', preReleaseTag);
-    log(`Using prerelease tag: ${preReleaseTag}`);
+    log(`${dryRun ? '[DRY RUN] ' : ''}Using prerelease tag: ${preReleaseTag}`);
   } else {
-    log('Using default tag: latest');
+    log(`${dryRun ? '[DRY RUN] ' : ''}Using default tag: latest`);
   }
-  
+
   // Add provenance if supported
   if (process.env.NPM_CONFIG_PROVENANCE === 'true') {
     publishArgs.push('--provenance');
   }
-  
+
+  // Add dry-run flag for npm
+  if (dryRun) {
+    publishArgs.push('--dry-run');
+  }
+
   const result = runCommand(publishArgs.join(' '), { cwd: packagePath });
-  
+
+  if (dryRun) {
+    if (result.success) {
+      log(`✅ [DRY RUN] Would successfully publish ${packageName}`);
+      log(`📋 [DRY RUN] Command: ${publishArgs.join(' ')}`);
+      return { success: true, dryRun: true };
+    } else {
+      warn(`⚠️ [DRY RUN] Would fail to publish ${packageName}`);
+      warn(`📋 [DRY RUN] Command: ${publishArgs.join(' ')}`);
+      warn(`📋 [DRY RUN] Error: ${result.error}`);
+      return { success: false, dryRun: true, error: result.error };
+    }
+  }
+
   if (result.success) {
     log(`✅ Successfully published ${packageName}`);
     return { success: true };
   }
-  
+
   // Handle common errors
   if (result.stderr.includes('You cannot publish over the previously published versions') ||
       result.stderr.includes('already exists')) {
     log(`ℹ️ ${packageName} already published`);
     return { success: true, skipped: true };
   }
-  
+
   if (result.stderr.includes('404') && result.stderr.includes('Not found') && retryOnFailure) {
     warn(`Package ${packageName} not found, might be a new package. Retrying...`);
     // For new packages, sometimes we need to retry
     await new Promise(resolve => setTimeout(resolve, 2000));
     return publishPackage(packagePath, packageName, { ...options, retryOnFailure: false });
   }
-  
+
   error(`Failed to publish ${packageName}:`);
   error(`Command: ${publishArgs.join(' ')}`);
   error(`Error: ${result.error}`);
   error(`STDERR: ${result.stderr}`);
-  
+
   return { success: false, error: result.error };
 }
 
@@ -245,12 +263,51 @@ async function publishAllPackages(packages, options = {}) {
   return allResults;
 }
 
+function showHelp() {
+  console.log(`
+Houdini Release Script
+
+Usage:
+  node packages/_scripts/release.js [options]
+
+Options:
+  --snapshot              Publish snapshot release
+  --tag=<tag>            Specify tag for snapshot release (e.g., --tag=commit-abc123)
+  --dry-run              Test run without actually publishing
+  --help                 Show this help message
+
+Examples:
+  node packages/_scripts/release.js                           # Regular release
+  node packages/_scripts/release.js --dry-run                 # Test regular release
+  node packages/_scripts/release.js --snapshot --tag=test     # Snapshot release
+  node packages/_scripts/release.js --snapshot --dry-run      # Test snapshot release
+
+NPM Scripts:
+  pnpm run release                    # Regular release
+  pnpm run release:dry-run            # Test regular release
+  pnpm run release:snapshot           # Snapshot release
+  pnpm run release:snapshot:dry-run   # Test snapshot release
+`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
+
+  if (args.includes('--help') || args.includes('-h')) {
+    showHelp();
+    return;
+  }
+
   const isSnapshot = args.includes('--snapshot');
   const snapshotTag = args.find(arg => arg.startsWith('--tag='))?.split('=')[1];
+  const dryRun = args.includes('--dry-run');
 
-  log('Starting Houdini release process...');
+  log(`Starting Houdini release process${dryRun ? ' (DRY RUN MODE)' : ''}...`);
+
+  if (dryRun) {
+    log('🧪 DRY RUN MODE: No packages will actually be published');
+    log('🧪 This will show you what would happen without making changes');
+  }
 
   // Check for prerelease mode
   const preReleaseInfo = getPreReleaseInfo();
@@ -274,31 +331,37 @@ async function main() {
   });
 
   if (!isSnapshot) {
-    // Try changeset publish first for regular releases
-    log('Attempting changeset publish...');
-    const changesetResult = runCommand('changeset publish');
+    if (dryRun) {
+      log('🧪 [DRY RUN] Would attempt changeset publish...');
+      log('🧪 [DRY RUN] Skipping changeset publish in dry-run mode, proceeding to individual package analysis');
+    } else {
+      // Try changeset publish first for regular releases
+      log('Attempting changeset publish...');
+      const changesetResult = runCommand('changeset publish');
 
-    if (changesetResult.success) {
-      log('✅ Changeset publish succeeded!');
-      return;
+      if (changesetResult.success) {
+        log('✅ Changeset publish succeeded!');
+        return;
+      }
+
+      warn('Changeset publish failed, falling back to individual publishing...');
+      warn(`Changeset error: ${changesetResult.error}`);
     }
-
-    warn('Changeset publish failed, falling back to individual publishing...');
-    warn(`Changeset error: ${changesetResult.error}`);
   } else {
     if (isPreRelease) {
-      log(`⚠️ Skipping snapshot release - in prerelease mode (tag: ${preReleaseInfo.tag})`);
-      log('Snapshot releases are disabled during prerelease mode');
+      log(`⚠️ ${dryRun ? '[DRY RUN] ' : ''}Skipping snapshot release - in prerelease mode (tag: ${preReleaseInfo.tag})`);
+      log(`${dryRun ? '[DRY RUN] ' : ''}Snapshot releases are disabled during prerelease mode`);
       return;
     }
-    log(`📸 Snapshot mode - will publish with tag: ${snapshotTag}`);
+    log(`📸 ${dryRun ? '[DRY RUN] ' : ''}Snapshot mode - will publish with tag: ${snapshotTag}`);
   }
 
   // Publish packages individually
   const publishOptions = {
     isSnapshot,
     snapshotTag,
-    preReleaseTag: isPreRelease ? preReleaseInfo.tag : ''
+    preReleaseTag: isPreRelease ? preReleaseInfo.tag : '',
+    dryRun
   };
 
   try {
@@ -308,18 +371,26 @@ async function main() {
     const successful = results.filter(r => r.success).length;
     const skipped = results.filter(r => r.skipped).length;
     const failed = results.filter(r => !r.success).length;
+    const dryRunResults = results.filter(r => r.dryRun).length;
 
-    log(`\n📊 Publishing Summary:`);
-    log(`  ✅ Successful: ${successful}`);
+    log(`\n📊 ${dryRun ? 'Dry Run ' : ''}Publishing Summary:`);
+    log(`  ✅ ${dryRun ? 'Would succeed' : 'Successful'}: ${successful}`);
     log(`  ⏭️ Skipped: ${skipped}`);
-    log(`  ❌ Failed: ${failed}`);
+    log(`  ❌ ${dryRun ? 'Would fail' : 'Failed'}: ${failed}`);
 
-    if (failed > 0) {
-      error('Some packages failed to publish');
-      process.exit(1);
+    if (dryRun) {
+      log(`\n🧪 DRY RUN COMPLETE - No packages were actually published`);
+      log(`🧪 ${successful} packages would be published successfully`);
+      if (failed > 0) {
+        log(`🧪 ${failed} packages would fail to publish`);
+      }
+    } else {
+      if (failed > 0) {
+        error('Some packages failed to publish');
+        process.exit(1);
+      }
+      log('🎉 All packages published successfully!');
     }
-
-    log('🎉 All packages published successfully!');
 
   } catch (err) {
     error(`Publishing failed: ${err.message}`);

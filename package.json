@@ -23,6 +23,8 @@
 		"changeset": "changeset",
 		"release": "pnpm run build && node packages/_scripts/release.js",
 		"release:snapshot": "pnpm run build && node packages/_scripts/release.js --snapshot",
+		"release:dry-run": "pnpm run build && node packages/_scripts/release.js --dry-run",
+		"release:snapshot:dry-run": "pnpm run build && node packages/_scripts/release.js --snapshot --dry-run",
 		"postinstall": "node -e \"try { require('husky').install(); console.log('ran prepack') } catch (e) {if (e.code !== 'MODULE_NOT_FOUND') throw e}\"",
 		"prepack": "pinst --disable",
 		"postpack": "pinst --enable"
