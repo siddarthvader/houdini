@@ -117,5 +117,5 @@ jobs:
               run: pnpm run release
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}  # Fallback for new packages
                   NPM_CONFIG_PROVENANCE: true
+                  # OIDC token is automatically provided by GitHub Actions
