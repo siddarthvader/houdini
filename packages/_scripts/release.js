@@ -1,13 +1,7 @@
 #!/usr/bin/env node
 
-/**
- * Comprehensive release script for Houdini monorepo
- * Handles both regular packages and Go-based packages with platform builds
- * Integrates with changesets for version management
- */
-
-import { execSync, spawn } from 'child_process';
-import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
+import { execSync } from 'child_process';
+import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, basename } from 'path';
 
 const PACKAGES_DIR = 'packages';
@@ -109,7 +103,7 @@ function discoverPackages() {
       const buildDir = join(packageDir, BUILD_DIR);
       const buildPackages = discoverBuildPackages(buildDir);
       packages.push({
-        type: 'go-package',
+        type: 'go',
         name: packageInfo.name,
         version: packageInfo.version,
         path: packageDir,
@@ -121,7 +115,7 @@ function discoverPackages() {
     } else {
       // Regular Node.js package
       packages.push({
-        type: 'node-package',
+        type: 'node',
         name: packageInfo.name,
         version: packageInfo.version,
         path: packageDir,
@@ -201,24 +195,36 @@ async function publishPackage(packagePath, packageName, options = {}) {
     return { success: true };
   }
 
+  // Enhanced error logging
+  error(`Failed to publish ${packageName}:`);
+  error(`Command: ${publishArgs.join(' ')}`);
+  error(`Working directory: ${packagePath}`);
+  error(`Exit code/Error: ${result.error}`);
+  if (result.output) {
+    error(`STDOUT: ${result.output}`);
+  }
+  if (result.stderr) {
+    error(`STDERR: ${result.stderr}`);
+  }
+
   // Handle common errors
-  if (result.stderr.includes('You cannot publish over the previously published versions') ||
-      result.stderr.includes('already exists')) {
+  if (result.stderr && (result.stderr.includes('You cannot publish over the previously published versions') ||
+      result.stderr.includes('already exists'))) {
     log(`i ${packageName} already published`);
     return { success: true, skipped: true };
   }
 
-  if (result.stderr.includes('404') && result.stderr.includes('Not found') && retryOnFailure) {
+  if (result.stderr && result.stderr.includes('404') && result.stderr.includes('Not found') && retryOnFailure) {
     warn(`Package ${packageName} not found, might be a new package. Retrying...`);
     // For new packages, sometimes we need to retry
     await new Promise(resolve => setTimeout(resolve, 2000));
     return publishPackage(packagePath, packageName, { ...options, retryOnFailure: false });
   }
 
-  error(`Failed to publish ${packageName}:`);
-  error(`Command: ${publishArgs.join(' ')}`);
-  error(`Error: ${result.error}`);
-  error(`STDERR: ${result.stderr}`);
+  // Check for authentication issues
+  if (result.stderr && (result.stderr.includes('401') || result.stderr.includes('403') || result.stderr.includes('authentication'))) {
+    error('❌ Authentication failed! Check NPM_TOKEN or OIDC configuration.');
+  }
 
   return { success: false, error: result.error };
 }
@@ -248,7 +254,7 @@ async function publishAllPackages(packages, options = {}) {
   const allResults = [];
   
   for (const pkg of packages) {
-    if (pkg.type === 'go-package') {
+    if (pkg.type === 'go') {
       const results = await publishGoPackage(pkg, options);
       allResults.push(...results);
     } else {
@@ -309,18 +315,23 @@ async function main() {
   const allPackages = discoverPackages();
 
   // TEMPORARY: Only publish houdini-react for testing
-  const packages = allPackages.filter(pkg => pkg.name === 'houdini-core');
+  const packages = allPackages.filter(pkg => pkg.name === 'houdini-react');
 
   if (packages.length === 0) {
     error('houdini-react package not found!');
+    error('Available packages:');
+    allPackages.forEach(pkg => error(`  - ${pkg.name}`));
     process.exit(1);
   }
 
   log(`🧪 TEST MODE: Only publishing houdini-react`);
-  log(`Discovered ${allPackages.length} total packages, but only publishing 1:`);
+  log(`Discovered ${allPackages.length} total packages, but only publishing ${packages.length}:`);
   packages.forEach(pkg => {
-    if (pkg.type === 'go-package') {
+    if (pkg.type === 'go') {
       log(`  - ${pkg.name} (Go package with ${pkg.platformPackages.length} platform builds)`);
+      pkg.allBuildPackages.forEach(buildPkg => {
+        log(`    └─ ${buildPkg.name}@${buildPkg.version} ${buildPkg.isMainPackage ? '(main)' : '(platform)'}`);
+      });
     } else {
       log(`  - ${pkg.name} (Node.js package)`);
     }

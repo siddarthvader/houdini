@@ -30,7 +30,6 @@ jobs:
               with:
                 node-version: 24
                 registry-url: 'https://registry.npmjs.org'
-                always-auth: true
 
             - uses: pnpm/action-setup@v2.0.1
               name: Install pnpm
@@ -68,43 +67,47 @@ jobs:
                   fi
 
             # Per-commit snapshot release - only runs when NOT in prerelease mode
-            - name: Publish per-commit snapshot release
-              if: steps.prerelease-check.outputs.is_prerelease == 'false'
-              run: |
-                  # Generate unique snapshot version based on commit
-                  COMMIT_SHA=$(git rev-parse --short HEAD)
-                  SNAPSHOT_TAG="commit-${COMMIT_SHA}"
-                  echo "Publishing snapshot release with tag: $SNAPSHOT_TAG"
-
-                  # Create a clean working directory for snapshot
-                  git stash --include-untracked || true
-
-                  # Apply snapshot version to all packages
-                  pnpm changeset version --snapshot $SNAPSHOT_TAG
-
-                  # Build all packages
-                  pnpm run build
-
-                  # Publish snapshot using comprehensive release script
-                  echo "Publishing snapshot packages with release script..."
-                  node packages/_scripts/release.js --snapshot --tag=$SNAPSHOT_TAG
-
-                  # Restore working directory
-                  git reset --hard HEAD
-                  git stash pop || true
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  NPM_CONFIG_PROVENANCE: true
+            # - name: Publish per-commit snapshot release
+            #   if: steps.prerelease-check.outputs.is_prerelease == 'false'
+            #   run: |
+            #       # Generate unique snapshot version based on commit
+            #       COMMIT_SHA=$(git rev-parse --short HEAD)
+            #       SNAPSHOT_TAG="commit-${COMMIT_SHA}"
+            #       echo "Publishing snapshot release with tag: $SNAPSHOT_TAG"
+            #
+            #       # Create a clean working directory for snapshot
+            #       git stash --include-untracked || true
+            #
+            #       # Apply snapshot version to all packages
+            #       pnpm changeset version --snapshot $SNAPSHOT_TAG
+            #
+            #       # Build all packages
+            #       pnpm run build
+            #
+            #       # Publish snapshot using comprehensive release script
+            #       echo "Publishing snapshot packages with release script..."
+            #       node packages/_scripts/release.js --snapshot --tag=$SNAPSHOT_TAG
+            #
+            #       # Restore working directory
+            #       git reset --hard HEAD
+            #       git stash pop || true
+            #   env:
+            #       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            #       NPM_CONFIG_PROVENANCE: true  # Disabled for initial publish of new packages
 
             # Regular changesets release workflow - creates PR or publishes when PR is merged
-            - name: Create Release Pull Request or Publish to Registry
+            - name: Create Release Pull Request if necessary
+              id: changesets
               uses: changesets/action@v1
               with:
                   version: pnpm run version
-                  publish: pnpm run release
                   title: ${{ steps.prerelease-check.outputs.title }}
                   commit: ${{ steps.prerelease-check.outputs.commit }}
                   createGithubReleases: true
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  NPM_CONFIG_PROVENANCE: true
+                  NPM_CONFIG_PROVENANCE: true 
+
+            - name: Publish Package
+              if: steps.changesets.outputs.hasChangesets == 'false'
+              run: pnpm run release
