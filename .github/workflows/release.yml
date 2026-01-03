@@ -30,6 +30,7 @@ jobs:
               with:
                 node-version: 24
                 registry-url: 'https://registry.npmjs.org'
+                always-auth: true
 
             - name: Update npm CLI
               run: npm install -g npm@latest # Ensure npm 11.5.1 or later
@@ -114,3 +115,7 @@ jobs:
             - name: Publish Package
               if: steps.changesets.outputs.hasChangesets == 'false'
               run: pnpm run release
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}  # Fallback for new packages
+                  NPM_CONFIG_PROVENANCE: true

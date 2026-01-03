@@ -312,20 +312,8 @@ async function main() {
   }
 
   // Discover all packages
-  const allPackages = discoverPackages();
+  const packages = discoverPackages().filter(pkg => pkg.name === 'houdini-react');
 
-  // TEMPORARY: Only publish houdini-react for testing
-  const packages = allPackages.filter(pkg => pkg.name === 'houdini-react');
-
-  if (packages.length === 0) {
-    error('houdini-react package not found!');
-    error('Available packages:');
-    allPackages.forEach(pkg => error(`  - ${pkg.name}`));
-    process.exit(1);
-  }
-
-  log(`🧪 TEST MODE: Only publishing houdini-react`);
-  log(`Discovered ${allPackages.length} total packages, but only publishing ${packages.length}:`);
   packages.forEach(pkg => {
     if (pkg.type === 'go') {
       log(`  - ${pkg.name} (Go package with ${pkg.platformPackages.length} platform builds)`);
@@ -349,15 +337,13 @@ async function main() {
     log(`📸 Snapshot mode - will publish with tag: ${snapshotTag}`);
   }
 
-  // Publish packages individually
-  const publishOptions = {
-    isSnapshot,
-    snapshotTag,
-    preReleaseTag: isPreRelease ? preReleaseInfo.tag : ''
-  };
-
   try {
-    const results = await publishAllPackages(packages, publishOptions);
+    // Publish packages individually
+    const results = await publishAllPackages(packages, {
+      isSnapshot,
+      snapshotTag,
+      preReleaseTag: isPreRelease ? preReleaseInfo.tag : ''
+    });
 
     // Summary
     const successful = results.filter(r => r.success).length;
