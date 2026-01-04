@@ -48,6 +48,7 @@
         "ast-types": "^0.16.1",
         "commander": "^9.4.0",
         "create-houdini": "workspace:^",
+        "houdini-core": "workspace:^",
         "deepmerge": "^4.2.2",
         "estree-walker": "^3.0.1",
         "fs-extra": "^10.1.0",
