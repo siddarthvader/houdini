@@ -162,6 +162,7 @@ function discoverBuildPackages(buildDir) {
       const isMainPackage = !subdirName.includes('-darwin-') &&
                            !subdirName.includes('-linux-') &&
                            !subdirName.includes('-windows-') &&
+                           !subdirName.includes('-win32-') &&
                            !packageInfo.os &&
                            !packageInfo.cpu;
 
@@ -258,15 +259,20 @@ async function publishPackage(packagePath, packageName, packageVersion, options 
 async function publishGoPackage(mod, options = {}) {
   const results = [];
 
-  // Publish platform packages first
-  for (const platformPkg of mod.platformPackages) {
-    const result = await publishPackage(platformPkg.path, platformPkg.name, platformPkg.version, options);
-    results.push({ package: platformPkg.name, ...result });
-  }
+  // Publish platform packages in parallel (they're independent)
+  log(`📦 Publishing ${mod.platformPackages.length} platform packages for ${mod.name} in parallel...`);
+  const platformResults = await Promise.all(
+    mod.platformPackages.map(async (platformPkg) => {
+      const result = await publishPackage(platformPkg.path, platformPkg.name, platformPkg.version, options);
+      return { package: platformPkg.name, ...result };
+    })
+  );
+  results.push(...platformResults);
 
   // Find and publish main package last (it depends on platform packages)
   const mainPackage = mod.allBuildPackages.find(p => p.isMainPackage);
   if (mainPackage) {
+    log(`📦 Publishing main package ${mainPackage.name} (depends on platform packages)...`);
     const result = await publishPackage(mainPackage.path, mainPackage.name, mainPackage.version, options);
     results.push({ package: mainPackage.name, ...result });
   }
@@ -276,17 +282,57 @@ async function publishGoPackage(mod, options = {}) {
 
 async function publishAllPackages(packages, options = {}) {
   const allResults = [];
-  
-  for (const pkg of packages) {
-    if (pkg.type === 'go') {
-      const results = await publishGoPackage(pkg, options);
-      allResults.push(...results);
-    } else {
+
+  // Separate packages by type and dependencies
+  const goPackages = packages.filter(pkg => pkg.type === 'go');
+  const nodePackages = packages.filter(pkg => pkg.type === 'node');
+
+  // Separate Node.js packages by dependencies
+  const corePackages = nodePackages.filter(pkg => pkg.name === 'houdini-core');
+  const dependentPackages = nodePackages.filter(pkg => pkg.name === 'houdini'); // depends on houdini-core
+  const independentPackages = nodePackages.filter(pkg =>
+    pkg.name !== 'houdini-core' && pkg.name !== 'houdini'
+  );
+
+  // Phase 1: Publish core dependencies and independent packages in parallel
+  log(`🚀 Phase 1: Publishing core packages and independent packages in parallel...`);
+  const phase1Promises = [
+    // Core packages (houdini-core)
+    ...corePackages.map(async (pkg) => {
       const result = await publishPackage(pkg.path, pkg.name, pkg.version, options);
-      allResults.push({ package: pkg.name, ...result });
+      return { package: pkg.name, ...result };
+    }),
+    // Independent Node.js packages
+    ...independentPackages.map(async (pkg) => {
+      const result = await publishPackage(pkg.path, pkg.name, pkg.version, options);
+      return { package: pkg.name, ...result };
+    }),
+    // All Go packages (platform packages in parallel, main packages after)
+    ...goPackages.map(pkg => publishGoPackage(pkg, options))
+  ];
+
+  const phase1Results = await Promise.all(phase1Promises);
+  // Flatten Go package results
+  for (const result of phase1Results) {
+    if (Array.isArray(result)) {
+      allResults.push(...result);
+    } else {
+      allResults.push(result);
     }
   }
-  
+
+  // Phase 2: Publish packages that depend on core packages
+  if (dependentPackages.length > 0) {
+    log(`🚀 Phase 2: Publishing packages that depend on core packages...`);
+    const phase2Results = await Promise.all(
+      dependentPackages.map(async (pkg) => {
+        const result = await publishPackage(pkg.path, pkg.name, pkg.version, options);
+        return { package: pkg.name, ...result };
+      })
+    );
+    allResults.push(...phase2Results);
+  }
+
   return allResults;
 }
 
@@ -300,11 +346,13 @@ Usage:
 Options:
   --snapshot              Publish snapshot release
   --tag=<tag>            Specify tag for snapshot release (e.g., --tag=commit-abc123)
+  --dry-run              Show what would be published without actually publishing
   --help                 Show this help message
 
 Examples:
   node packages/_scripts/release.js                           # Regular release
   node packages/_scripts/release.js --snapshot --tag=test     # Snapshot release
+  node packages/_scripts/release.js --dry-run                 # Show publishing plan
 
 NPM Scripts:
   pnpm run release                    # Regular release
@@ -321,6 +369,7 @@ async function main() {
   }
 
   const isSnapshot = args.includes('--snapshot');
+  const isDryRun = args.includes('--dry-run');
   const snapshotTag = args.find(arg => arg.startsWith('--tag='))?.split('=')[1];
 
   log('Starting Houdini release process...');
@@ -349,6 +398,47 @@ async function main() {
       log(`- ${pkg.name} (Node.js package)`);
     }
   });
+
+  if (isDryRun) {
+    log("\n🔍 DRY RUN - Publishing plan:");
+
+    // Show the parallelization plan
+    const goPackages = packages.filter(pkg => pkg.type === 'go');
+    const nodePackages = packages.filter(pkg => pkg.type === 'node');
+    const corePackages = nodePackages.filter(pkg => pkg.name === 'houdini-core');
+    const dependentPackages = nodePackages.filter(pkg => pkg.name === 'houdini');
+    const independentPackages = nodePackages.filter(pkg =>
+      pkg.name !== 'houdini-core' && pkg.name !== 'houdini'
+    );
+
+    log("\n📋 Phase 1 (Parallel):");
+    if (corePackages.length > 0) {
+      log("  🔧 Core packages:");
+      corePackages.forEach(pkg => log(`    - ${pkg.name}@${pkg.version}`));
+    }
+    if (independentPackages.length > 0) {
+      log("  📦 Independent Node.js packages:");
+      independentPackages.forEach(pkg => log(`    - ${pkg.name}@${pkg.version}`));
+    }
+    if (goPackages.length > 0) {
+      log("  🚀 Go packages (platform packages in parallel, main packages after):");
+      goPackages.forEach(pkg => {
+        log(`    - ${pkg.name} (${pkg.platformPackages.length} platform packages)`);
+        pkg.platformPackages.forEach(p => log(`      └─ ${p.name}@${p.version}`));
+        const mainPkg = pkg.allBuildPackages.find(p => p.isMainPackage);
+        if (mainPkg) log(`      └─ ${mainPkg.name}@${mainPkg.version} (main)`);
+      });
+    }
+
+    if (dependentPackages.length > 0) {
+      log("\n📋 Phase 2 (After Phase 1):");
+      log("  🔗 Packages with dependencies:");
+      dependentPackages.forEach(pkg => log(`    - ${pkg.name}@${pkg.version}`));
+    }
+
+    log("\n✅ Dry run complete. Use without --dry-run to actually publish.");
+    return;
+  }
 
   console.log("\nPublishing packages...")
 
