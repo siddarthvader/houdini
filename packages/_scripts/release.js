@@ -361,12 +361,12 @@ async function main() {
     });
 
     // Summary
-    const successful = results.filter(r => r.success).length;
+    const published = results.filter(r => r.success && !r.skipped).length;
     const skipped = results.filter(r => r.skipped).length;
     const failed = results.filter(r => !r.success).length;
 
     log(`\n📊 Publishing Summary:`);
-    log(`  ✅ Successful: ${successful}`);
+    log(`  ✅ Published: ${published}`);
     log(`  ⏭  Skipped: ${skipped}`);
     log(`  ❌ Failed: ${failed}\n`);
 
