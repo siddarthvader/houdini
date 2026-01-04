@@ -216,7 +216,7 @@ async function publishPackage(packagePath, packageName, options = {}) {
 
   log(`Publishing ${packageName} from ${packagePath}...`);
 
-  const publishArgs = ['npm', 'publish', '--access', 'public'];
+  const publishArgs = ['pnpm', 'publish', '--access', 'public'];
 
   // Determine which tag to use
   if (isSnapshot && snapshotTag) {
