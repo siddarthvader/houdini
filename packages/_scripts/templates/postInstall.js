@@ -87,11 +87,14 @@ async function downloadBinaryFromNpm() {
 
 function isPlatformSpecificPackageInstalled() {
 	try {
-		// Resolving will fail if the optionalDependency was not installed
-		require.resolve(`${platformSpecificPackageName}/bin/${binaryName}`)
+		// Try to resolve the platform package itself
+		require.resolve(`${platformSpecificPackageName}/package.json`)
 		return true
 	} catch (e) {
-		return false
+		// Also check if it exists as a sibling directory
+		const siblingPath = path.join(__dirname, '..', platformSpecificPackageName)
+		const siblingBinaryPath = path.join(siblingPath, 'bin', binaryName)
+		return fs.existsSync(siblingBinaryPath)
 	}
 }
 
@@ -100,17 +103,44 @@ if (!platformSpecificPackageName) {
 }
 
 // once we've confirmed the required package is installed we want to overwrite the bin entry of our package.json
-// to point to the correct binary
+// to point to the correct binary for optimal performance (skip Node.js overhead)
 function overwriteBinary() {
 	const packageJsonPath = path.join(__dirname, 'package.json')
 	const packageJson = require(packageJsonPath)
-	packageJson.bin = path.join('..', platformSpecificPackageName, 'bin', binaryName)
-	fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2))
+
+	let binaryPath = null
+
+	try {
+		// Method 1: Use require.resolve to find the actual path to the platform-specific package
+		// This works with pnpm and other package managers that use symlinks
+		const platformPackagePath = require.resolve(`${platformSpecificPackageName}/package.json`)
+		const platformPackageDir = path.dirname(platformPackagePath)
+		binaryPath = path.join(platformPackageDir, 'bin', binaryName)
+	} catch (error) {
+		// Method 2: Check if platform package is installed as a sibling directory
+		// This works with npm and local installs
+		const siblingPath = path.join(__dirname, '..', platformSpecificPackageName)
+		const siblingBinaryPath = path.join(siblingPath, 'bin', binaryName)
+
+		if (fs.existsSync(siblingBinaryPath)) {
+			binaryPath = siblingBinaryPath
+		} else {
+			// Use shim as fallback
+			return
+		}
+	}
+
+	if (binaryPath) {
+		// Make the path relative to the main package directory
+		const relativeBinaryPath = path.relative(__dirname, binaryPath)
+		packageJson.bin = relativeBinaryPath
+
+		fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2))
+	}
 }
 
 // Skip downloading the binary if it was already installed via optionalDependencies
 if (!isPlatformSpecificPackageInstalled()) {
-	console.log('Platform specific package not found. Will manually download binary.')
 	downloadBinaryFromNpm().then(overwriteBinary)
 } else {
 	overwriteBinary()
