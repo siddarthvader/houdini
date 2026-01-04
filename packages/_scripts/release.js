@@ -206,7 +206,7 @@ async function publishPackage(packagePath, packageName, options = {}) {
     if (packageInfo) {
       const versionCheck = checkSpecificVersion(packageName, packageInfo.version);
       if (versionCheck.exists) {
-        log(`ℹ️ ${packageName}@${packageInfo.version} already published - skipping`);
+        log(`i ${packageName}@${packageInfo.version} already published - skipping`);
         return { success: true, skipped: true };
       }
     }
@@ -364,7 +364,7 @@ async function main() {
   }
 
   // Discover all packages
-  const packages = discoverPackages().filter(pkg => pkg.name === 'houdini-core');
+  const packages = discoverPackages()
 
   // Check package existence and show summary
   let newPackageCount = 0;
