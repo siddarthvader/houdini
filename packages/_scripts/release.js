@@ -345,7 +345,7 @@ async function main() {
         log(` └─ ${buildPkg.name}@${buildPkg.version}`);
       }
     } else {
-      log(` - ${pkg.name} (Node.js package) - ${status}`);
+      log(`- ${pkg.name} (Node.js package)`);
     }
   });
 
