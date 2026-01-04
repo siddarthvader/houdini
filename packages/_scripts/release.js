@@ -1,11 +1,39 @@
 #!/usr/bin/env node
 
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, basename } from 'path';
 
 const PACKAGES_DIR = 'packages';
 const BUILD_DIR = 'build';
+
+// Concurrency limit for parallel publishing to avoid overwhelming npm servers
+const MAX_CONCURRENT_PUBLISHES = 5;
+
+// Utility function to limit concurrency
+async function limitConcurrency(tasks, limit) {
+  const results = [];
+  const executing = [];
+
+  for (const task of tasks) {
+    const promise = task().then(result => {
+      executing.splice(executing.indexOf(promise), 1);
+      return result;
+    });
+
+    results.push(promise);
+    executing.push(promise);
+
+    if (executing.length >= limit) {
+      await Promise.race(executing);
+    }
+  }
+
+  return Promise.all(results);
+}
 
 function log(message) {
   console.log(`${message}`);
@@ -19,15 +47,14 @@ function warn(message) {
   console.warn(`WARN: ${message}`);
 }
 
-function runCommand(command, options = {}) {
+async function runCommand(command, options = {}) {
   try {
     log(`Running: ${command}`);
-    const result = execSync(command, {
+    const { stdout, stderr } = await execAsync(command, {
       encoding: 'utf8',
-      stdio: 'pipe',
       ...options
     });
-    return { success: true, output: result.trim() };
+    return { success: true, output: stdout.trim(), stderr: stderr.trim() };
   } catch (err) {
     return {
       success: false,
@@ -38,12 +65,11 @@ function runCommand(command, options = {}) {
   }
 }
 
-function checkPackageExists(name, version) {
+async function checkPackageExists(name, version) {
   try {
     // Use npm view to check if package exists
-    execSync(`npm view ${name}@${version}`, {
-      encoding: 'utf8',
-      stdio: 'pipe'
+    await execAsync(`npm view ${name}@${version}`, {
+      encoding: 'utf8'
     });
     return true
   } catch (err) {
@@ -183,7 +209,7 @@ async function publishPackage(packagePath, packageName, packageVersion, options 
   const { isSnapshot = false, snapshotTag = '', preReleaseTag = '', retryOnFailure = true } = options;
 
   // Check if package already exists
-  const packageCheck = checkPackageExists(packageName, packageVersion);
+  const packageCheck = await checkPackageExists(packageName, packageVersion);
   if (packageCheck) {
     log(`📦 Package ${packageName}@${packageVersion} already exists`);
     return { success: true, skipped: true };
@@ -210,7 +236,7 @@ async function publishPackage(packagePath, packageName, packageVersion, options 
     publishArgs.push('--no-git-checks');
   }
 
-  const result = runCommand(publishArgs.join(' '), { cwd: packagePath });
+  const result = await runCommand(publishArgs.join(' '), { cwd: packagePath });
 
   if (result.success) {
     log(`✅ Successfully published ${packageName}@${packageVersion}`);
@@ -259,14 +285,13 @@ async function publishPackage(packagePath, packageName, packageVersion, options 
 async function publishGoPackage(mod, options = {}) {
   const results = [];
 
-  // Publish platform packages in parallel (they're independent)
+  // Publish platform packages in parallel with concurrency limit (they're independent)
   log(`📦 Publishing ${mod.platformPackages.length} platform packages for ${mod.name} in parallel...`);
-  const platformResults = await Promise.all(
-    mod.platformPackages.map(async (platformPkg) => {
-      const result = await publishPackage(platformPkg.path, platformPkg.name, platformPkg.version, options);
-      return { package: platformPkg.name, ...result };
-    })
+  const platformTasks = mod.platformPackages.map((platformPkg) =>
+    () => publishPackage(platformPkg.path, platformPkg.name, platformPkg.version, options)
+      .then(result => ({ package: platformPkg.name, ...result }))
   );
+  const platformResults = await limitConcurrency(platformTasks, MAX_CONCURRENT_PUBLISHES);
   results.push(...platformResults);
 
   // Find and publish main package last (it depends on platform packages)
@@ -296,22 +321,26 @@ async function publishAllPackages(packages, options = {}) {
 
   // Phase 1: Publish core dependencies and independent packages in parallel
   log(`🚀 Phase 1: Publishing core packages and independent packages in parallel...`);
-  const phase1Promises = [
-    // Core packages (houdini-core)
-    ...corePackages.map(async (pkg) => {
-      const result = await publishPackage(pkg.path, pkg.name, pkg.version, options);
-      return { package: pkg.name, ...result };
-    }),
-    // Independent Node.js packages
-    ...independentPackages.map(async (pkg) => {
-      const result = await publishPackage(pkg.path, pkg.name, pkg.version, options);
-      return { package: pkg.name, ...result };
-    }),
-    // All Go packages (platform packages in parallel, main packages after)
-    ...goPackages.map(pkg => publishGoPackage(pkg, options))
+
+  // Create tasks for Node.js packages
+  const nodeJsTasks = [
+    ...corePackages.map((pkg) =>
+      () => publishPackage(pkg.path, pkg.name, pkg.version, options)
+        .then(result => ({ package: pkg.name, ...result }))
+    ),
+    ...independentPackages.map((pkg) =>
+      () => publishPackage(pkg.path, pkg.name, pkg.version, options)
+        .then(result => ({ package: pkg.name, ...result }))
+    )
   ];
 
-  const phase1Results = await Promise.all(phase1Promises);
+  // Run Node.js packages and Go packages in parallel
+  const phase1Results = await Promise.all([
+    // Node.js packages with concurrency limit
+    limitConcurrency(nodeJsTasks, MAX_CONCURRENT_PUBLISHES),
+    // Go packages (each handles its own concurrency internally)
+    ...goPackages.map(pkg => publishGoPackage(pkg, options))
+  ]);
   // Flatten Go package results
   for (const result of phase1Results) {
     if (Array.isArray(result)) {
