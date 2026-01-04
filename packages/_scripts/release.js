@@ -189,7 +189,6 @@ async function publishPackage(packagePath, packageName, packageVersion, options 
   }
 
   log(`🚀 Publishing ${packageName}@${packageVersion} from ${packagePath}...`);
-  return { success: true };
 
   const publishArgs = ['pnpm', 'publish', '--access', 'public'];
 
