@@ -204,6 +204,11 @@ async function publishPackage(packagePath, packageName, packageVersion, options 
     publishArgs.push('--provenance');
   }
 
+  // Skip git checks in CI environments to avoid "unclean working tree" errors
+  if (process.env.CI) {
+    publishArgs.push('--no-git-checks');
+  }
+
   const result = runCommand(publishArgs.join(' '), { cwd: packagePath });
 
   if (result.success) {
