@@ -276,7 +276,7 @@ async function publishAllPackages(packages, options = {}) {
   const allResults = [];
   
   for (const pkg of packages) {
-    console.log("")
+    console.log("\n")
     if (pkg.type === 'go') {
       const results = await publishGoPackage(pkg, options);
       allResults.push(...results);
