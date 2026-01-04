@@ -374,9 +374,6 @@ async function main() {
       error('Some packages failed to publish');
       process.exit(1);
     }
-
-    log('🎉 All packages published successfully!');
-
   } catch (err) {
     error(`Publishing failed: ${err.message}`);
     process.exit(1);
