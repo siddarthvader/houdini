@@ -38,6 +38,20 @@ function runCommand(command, options = {}) {
   }
 }
 
+function checkPackageExists(packageName) {
+  try {
+    // Use npm view to check if package exists
+    const result = execSync(`npm view ${packageName} version`, {
+      encoding: 'utf8',
+      stdio: 'pipe'
+    });
+    return { exists: true, version: result.trim() };
+  } catch (err) {
+    // Package doesn't exist if npm view fails
+    return { exists: false, version: null };
+  }
+}
+
 function getPackageInfo(packageJsonPath) {
   if (!existsSync(packageJsonPath)) {
     return null;
@@ -167,6 +181,14 @@ function discoverBuildPackages(buildDir) {
 
 async function publishPackage(packagePath, packageName, options = {}) {
   const { isSnapshot = false, snapshotTag = '', preReleaseTag = '', retryOnFailure = true } = options;
+
+  // Check if package already exists
+  const packageCheck = checkPackageExists(packageName);
+  if (packageCheck.exists) {
+    log(`📦 Package ${packageName} already exists (version: ${packageCheck.version})`);
+  } else {
+    log(`🆕 Package ${packageName} is new - will be created`);
+  }
 
   log(`Publishing ${packageName} from ${packagePath}...`);
 
@@ -312,18 +334,41 @@ async function main() {
   }
 
   // Discover all packages
-  const packages = discoverPackages().filter(pkg => pkg.name === 'houdini-react');
+  const packages = discoverPackages().filter(pkg => pkg.name === 'houdini-core');
+
+  // Check package existence and show summary
+  let newPackageCount = 0;
+  let existingPackageCount = 0;
 
   packages.forEach(pkg => {
     if (pkg.type === 'go') {
       log(`  - ${pkg.name} (Go package with ${pkg.platformPackages.length} platform builds)`);
       pkg.allBuildPackages.forEach(buildPkg => {
-        log(`    └─ ${buildPkg.name}@${buildPkg.version} ${buildPkg.isMainPackage ? '(main)' : '(platform)'}`);
+        const exists = checkPackageExists(buildPkg.name);
+        const status = exists.exists ? `existing v${exists.version}` : 'NEW';
+        if (exists.exists) {
+          existingPackageCount++;
+        } else {
+          newPackageCount++;
+        }
+        log(`    └─ ${buildPkg.name}@${buildPkg.version} ${buildPkg.isMainPackage ? '(main)' : '(platform)'} - ${status}`);
       });
     } else {
-      log(`  - ${pkg.name} (Node.js package)`);
+      const exists = checkPackageExists(pkg.name);
+      const status = exists.exists ? `existing v${exists.version}` : 'NEW';
+      if (exists.exists) {
+        existingPackageCount++;
+      } else {
+        newPackageCount++;
+      }
+      log(`  - ${pkg.name} (Node.js package) - ${status}`);
     }
   });
+
+  log(`\n📊 Package Summary:`);
+  log(`  🆕 New packages: ${newPackageCount}`);
+  log(`  📦 Existing packages: ${existingPackageCount}`);
+  log(`  📋 Total to publish: ${newPackageCount + existingPackageCount}\n`);
 
   if (!isSnapshot) {
     log('Regular release mode - using custom publishing logic');

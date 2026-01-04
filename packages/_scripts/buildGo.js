@@ -102,6 +102,12 @@ export default async function () {
 						bin,
 						os: [platform.nodeOS],
 						cpu: [platform.cpu],
+						repository: packageJSON.repository,
+						license: packageJSON.license,
+						author: packageJSON.author,
+						description: packageJSON.description,
+						keywords: packageJSON.keywords,
+						homepage: packageJSON.homepage,
 					},
 					null,
 					4
