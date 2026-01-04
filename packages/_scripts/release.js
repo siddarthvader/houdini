@@ -52,6 +52,20 @@ function checkPackageExists(packageName) {
   }
 }
 
+function checkSpecificVersion(packageName, version) {
+  try {
+    // Check if specific version exists
+    const result = execSync(`npm view ${packageName}@${version} version`, {
+      encoding: 'utf8',
+      stdio: 'pipe'
+    });
+    return { exists: true, version: result.trim() };
+  } catch (err) {
+    // Version doesn't exist if npm view fails
+    return { exists: false, version: null };
+  }
+}
+
 function getPackageInfo(packageJsonPath) {
   if (!existsSync(packageJsonPath)) {
     return null;
@@ -186,6 +200,16 @@ async function publishPackage(packagePath, packageName, options = {}) {
   const packageCheck = checkPackageExists(packageName);
   if (packageCheck.exists) {
     log(`📦 Package ${packageName} already exists (version: ${packageCheck.version})`);
+
+    // Check if the specific version we're trying to publish already exists
+    const packageInfo = getPackageInfo(join(packagePath, 'package.json'));
+    if (packageInfo) {
+      const versionCheck = checkSpecificVersion(packageName, packageInfo.version);
+      if (versionCheck.exists) {
+        log(`ℹ️ ${packageName}@${packageInfo.version} already published - skipping`);
+        return { success: true, skipped: true };
+      }
+    }
   } else {
     log(`🆕 Package ${packageName} is new - will be created`);
   }
@@ -229,10 +253,16 @@ async function publishPackage(packagePath, packageName, options = {}) {
     error(`STDERR: ${result.stderr}`);
   }
 
-  // Handle common errors
-  if (result.stderr && (result.stderr.includes('You cannot publish over the previously published versions') ||
-      result.stderr.includes('already exists'))) {
-    log(`i ${packageName} already published`);
+  // Handle common errors - check for various "already published" error formats
+  const isAlreadyPublished = result.stderr && (
+    result.stderr.includes('You cannot publish over the previously published versions') ||
+    result.stderr.includes('already exists') ||
+    result.stderr.includes('You cannot publish over') ||
+    (result.stderr.includes('403 Forbidden') && result.stderr.includes('publish over'))
+  );
+
+  if (isAlreadyPublished) {
+    log(`i ${packageName} already published - skipping`);
     return { success: true, skipped: true };
   }
 
