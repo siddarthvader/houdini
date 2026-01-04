@@ -8,15 +8,15 @@ const PACKAGES_DIR = 'packages';
 const BUILD_DIR = 'build';
 
 function log(message) {
-  console.log(`[release] ${message}`);
+  console.log(`${message}`);
 }
 
 function error(message) {
-  console.error(`[release] ERROR: ${message}`);
+  console.error(`ERROR: ${message}`);
 }
 
 function warn(message) {
-  console.warn(`[release] WARN: ${message}`);
+  console.warn(`WARN: ${message}`);
 }
 
 function runCommand(command, options = {}) {
@@ -38,30 +38,16 @@ function runCommand(command, options = {}) {
   }
 }
 
-function checkPackageExists(packageName) {
+function checkPackageExists(name, version) {
   try {
     // Use npm view to check if package exists
-    const result = execSync(`npm view ${packageName} version`, {
+    const result = execSync(`npm view ${name}@${version}`, {
       encoding: 'utf8',
       stdio: 'pipe'
     });
     return { exists: true, version: result.trim() };
   } catch (err) {
     // Package doesn't exist if npm view fails
-    return { exists: false, version: null };
-  }
-}
-
-function checkSpecificVersion(packageName, version) {
-  try {
-    // Check if specific version exists
-    const result = execSync(`npm view ${packageName}@${version} version`, {
-      encoding: 'utf8',
-      stdio: 'pipe'
-    });
-    return { exists: true, version: result.trim() };
-  } catch (err) {
-    // Version doesn't exist if npm view fails
     return { exists: false, version: null };
   }
 }
@@ -123,8 +109,7 @@ function discoverPackages() {
     }
 
     // Check if this is a Go package by looking for main.go
-    const mainGoPath = join(packageDir, 'main.go');
-    const isGoPackage = existsSync(mainGoPath);
+    const isGoPackage = existsSync(join(packageDir, 'main.go'));
 
     if (isGoPackage) {
       // Go-based package with platform builds
@@ -193,25 +178,14 @@ function discoverBuildPackages(buildDir) {
   return buildPackages;
 }
 
-async function publishPackage(packagePath, packageName, options = {}) {
+async function publishPackage(packagePath, packageName, packageVersion, options = {}) {
   const { isSnapshot = false, snapshotTag = '', preReleaseTag = '', retryOnFailure = true } = options;
 
   // Check if package already exists
-  const packageCheck = checkPackageExists(packageName);
+  const packageCheck = checkPackageExists(packageName, packageVersion);
   if (packageCheck.exists) {
-    log(`📦 Package ${packageName} already exists (version: ${packageCheck.version})`);
-
-    // Check if the specific version we're trying to publish already exists
-    const packageInfo = getPackageInfo(join(packagePath, 'package.json'));
-    if (packageInfo) {
-      const versionCheck = checkSpecificVersion(packageName, packageInfo.version);
-      if (versionCheck.exists) {
-        log(`i ${packageName}@${packageInfo.version} already published - skipping`);
-        return { success: true, skipped: true };
-      }
-    }
-  } else {
-    log(`🆕 Package ${packageName} is new - will be created`);
+    log(`📦 Package ${packageName}@${packageCheck.version} already exists`);
+    return
   }
 
   log(`Publishing ${packageName} from ${packagePath}...`);
@@ -221,12 +195,8 @@ async function publishPackage(packagePath, packageName, options = {}) {
   // Determine which tag to use
   if (isSnapshot && snapshotTag) {
     publishArgs.push('--tag', snapshotTag);
-    log(`Using snapshot tag: ${snapshotTag}`);
   } else if (preReleaseTag) {
     publishArgs.push('--tag', preReleaseTag);
-    log(`Using prerelease tag: ${preReleaseTag}`);
-  } else {
-    log('Using default tag: latest');
   }
 
   // Add provenance if supported
@@ -281,21 +251,21 @@ async function publishPackage(packagePath, packageName, options = {}) {
   return { success: false, error: result.error };
 }
 
-async function publishGoPackage(goPackage, options = {}) {
-  log(`Publishing Go package: ${goPackage.name}`);
+async function publishGoPackage(mod, options = {}) {
+  log(`Publishing Go package: ${mod.name}`);
 
   const results = [];
 
   // Publish platform packages first
-  for (const platformPkg of goPackage.platformPackages) {
-    const result = await publishPackage(platformPkg.path, platformPkg.name, options);
+  for (const platformPkg of mod.platformPackages) {
+    const result = await publishPackage(platformPkg.path, platformPkg.name, mod.version, options);
     results.push({ package: platformPkg.name, ...result });
   }
 
   // Find and publish main package last (it depends on platform packages)
-  const mainPackage = goPackage.allBuildPackages.find(p => p.isMainPackage);
+  const mainPackage = mod.allBuildPackages.find(p => p.isMainPackage);
   if (mainPackage) {
-    const result = await publishPackage(mainPackage.path, mainPackage.name, options);
+    const result = await publishPackage(mainPackage.path, mainPackage.name, mainPackage.version, options);
     results.push({ package: mainPackage.name, ...result });
   }
 
@@ -306,6 +276,7 @@ async function publishAllPackages(packages, options = {}) {
   const allResults = [];
   
   for (const pkg of packages) {
+    console.log("")
     if (pkg.type === 'go') {
       const results = await publishGoPackage(pkg, options);
       allResults.push(...results);
@@ -358,59 +329,27 @@ async function main() {
   const isPreRelease = preReleaseInfo !== null;
 
   if (isPreRelease) {
-    log(`🚧 Prerelease mode detected - tag: ${preReleaseInfo.tag}, mode: ${preReleaseInfo.mode}`);
+    log(`🚧 Prerelease mode detected - tag: ${preReleaseInfo.tag}`);
   } else {
-    log('📦 Regular release mode');
+    log('📦 Standard release mode');
   }
 
   // Discover all packages
   const packages = discoverPackages()
 
-  // Check package existence and show summary
-  let newPackageCount = 0;
-  let existingPackageCount = 0;
-
+  log("🔍 Discovered packages to publish:");
   packages.forEach(pkg => {
     if (pkg.type === 'go') {
-      log(`  - ${pkg.name} (Go package with ${pkg.platformPackages.length} platform builds)`);
-      pkg.allBuildPackages.forEach(buildPkg => {
-        const exists = checkPackageExists(buildPkg.name);
-        const status = exists.exists ? `existing v${exists.version}` : 'NEW';
-        if (exists.exists) {
-          existingPackageCount++;
-        } else {
-          newPackageCount++;
-        }
-        log(`    └─ ${buildPkg.name}@${buildPkg.version} ${buildPkg.isMainPackage ? '(main)' : '(platform)'} - ${status}`);
-      });
-    } else {
-      const exists = checkPackageExists(pkg.name);
-      const status = exists.exists ? `existing v${exists.version}` : 'NEW';
-      if (exists.exists) {
-        existingPackageCount++;
-      } else {
-        newPackageCount++;
+      log(`- ${pkg.name} (Go package with ${pkg.platformPackages.length} platform builds)`);
+      for (const buildPkg of pkg.platformPackages) {
+        log(` └─ ${buildPkg.name}@${buildPkg.version}`);
       }
-      log(`  - ${pkg.name} (Node.js package) - ${status}`);
+    } else {
+      log(` - ${pkg.name} (Node.js package) - ${status}`);
     }
   });
 
-  log(`\n📊 Package Summary:`);
-  log(`  🆕 New packages: ${newPackageCount}`);
-  log(`  📦 Existing packages: ${existingPackageCount}`);
-  log(`  📋 Total to publish: ${newPackageCount + existingPackageCount}\n`);
-
-  if (!isSnapshot) {
-    log('Regular release mode - using custom publishing logic');
-    log('Changeset handles version management, custom script handles publishing');
-  } else {
-    if (isPreRelease) {
-      log(`! Skipping snapshot release - in prerelease mode (tag: ${preReleaseInfo.tag})`);
-      log('Snapshot releases are disabled during prerelease mode');
-      return;
-    }
-    log(`📸 Snapshot mode - will publish with tag: ${snapshotTag}`);
-  }
+  console.log("\n Publishing packages...\n")
 
   try {
     // Publish packages individually
