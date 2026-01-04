@@ -1,6 +1,19 @@
 {
     "name": "houdini-core",
     "version": "2.0.0-go.0",
+    "description": "The core GraphQL client for Houdini",
+    "keywords": [
+        "graphql",
+        "graphql-client",
+        "houdini"
+    ],
+    "homepage": "https://github.com/HoudiniGraphql/houdini",
+    "funding": "https://github.com/sponsors/HoudiniGraphql",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/HoudiniGraphql/houdini.git"
+    },
+    "license": "MIT",
     "scripts": {
         "compile": "scripts build-go",
         "typedefs": "scripts typedefs --go-package"
