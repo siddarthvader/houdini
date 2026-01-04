@@ -47,7 +47,6 @@
         "@whatwg-node/server": "^0.9.14",
         "ast-types": "^0.16.1",
         "commander": "^9.4.0",
-        "create-houdini": "workspace:^",
         "houdini-core": "workspace:^",
         "deepmerge": "^4.2.2",
         "estree-walker": "^3.0.1",
