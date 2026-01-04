@@ -1,5 +1,6 @@
 import childProcess from 'node:child_process'
 import fs from 'node:fs/promises'
+import fsSync from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -248,4 +249,20 @@ export default async function () {
 			}
 		}
 	} catch (e) {}
+
+	// Finally, update the files field with all files that actually exist in the package directory
+	const finalPackageJSONPath = path.join(buildDir, packageJSON.name, 'package.json')
+	const finalPackageJSON = JSON.parse(await fs.readFile(finalPackageJSONPath, 'utf-8'))
+
+	// Compute files dynamically from what exists in the package directory
+	finalPackageJSON.files = fsSync.readdirSync(path.join(buildDir, packageJSON.name))
+		.filter(file => {
+			// Exclude package.json since it's automatically included
+			if (file === 'package.json') return false
+
+			// Include all other files and directories
+			return true
+		})
+
+	await fs.writeFile(finalPackageJSONPath, JSON.stringify(finalPackageJSON, null, 4))
 }
