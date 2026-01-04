@@ -5,8 +5,8 @@ function getBinaryPath() {
 	const BINARY_DISTRIBUTION_PACKAGES = {
 		'linux-x64': 'my-package-linux-x64',
 		'linux-arm64': 'my-package-linux-arm64',
-		'win32-x64': 'my-package-windows-x64',
-		'win32-arm64': 'my-package-windows-arm64',
+		'win32-x64': 'my-package-win32-x64',
+		'win32-arm64': 'my-package-win32-arm64',
 		'darwin-x64': 'my-package-darwin-x64',
 		'darwin-arm64': 'my-package-darwin-arm64',
 	}
