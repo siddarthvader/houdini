@@ -85,7 +85,7 @@ export default async function () {
 				await execCmd('chmod', ['+x', path.join(outputDir, bin)], {})
 			}
 
-      // we can't have any worksapce entries in our dev depenendencies
+      // we can't have any workspace entries in our dev dependencies
       for (const [key, value] of Object.entries(packageJSON.devDependencies || {})) {
         if (value === 'workspace:^') {
           delete packageJSON.devDependencies[key]
@@ -121,9 +121,37 @@ export default async function () {
 	  await fs.mkdir(path.join(buildDir, packageJSON.name))
   } catch {}
 
+	// resolve workspace dependencies to actual versions
+	const resolvedDependencies = { ...packageJSON.dependencies }
+	for (const [key, value] of Object.entries(resolvedDependencies || {})) {
+		if (value === 'workspace:^') {
+			// Read the version from the workspace package
+			try {
+				const workspacePackagePath = path.join(path.dirname(cwd), key, 'package.json')
+				const workspacePackage = JSON.parse(await fs.readFile(workspacePackagePath, 'utf-8'))
+				resolvedDependencies[key] = `^${workspacePackage.version}`
+			} catch (error) {
+				console.warn(`Warning: Could not resolve workspace dependency ${key}:`, error.message)
+				// Remove the dependency if we can't resolve it
+				delete resolvedDependencies[key]
+			}
+		}
+	}
+
+	// also resolve workspace devDependencies for the main package
+	const resolvedDevDependencies = { ...packageJSON.devDependencies }
+	for (const [key, value] of Object.entries(resolvedDevDependencies || {})) {
+		if (value === 'workspace:^') {
+			// For devDependencies, we typically just remove them since they're not needed at runtime
+			delete resolvedDevDependencies[key]
+		}
+	}
+
 	// modify the package.json
 	packageJSON = {
 		...packageJSON,
+		dependencies: resolvedDependencies,
+		devDependencies: resolvedDevDependencies,
 		optionalDependencies: Object.fromEntries(
 			platforms.map((platform) => [
 				`${packageJSON.name}-${platform.goOS}-${platform.arch}`,
