@@ -41,14 +41,14 @@ function runCommand(command, options = {}) {
 function checkPackageExists(name, version) {
   try {
     // Use npm view to check if package exists
-    const result = execSync(`npm view ${name}@${version}`, {
+    execSync(`npm view ${name}@${version}`, {
       encoding: 'utf8',
       stdio: 'pipe'
     });
-    return { exists: true, version: result.trim() };
+    return true
   } catch (err) {
     // Package doesn't exist if npm view fails
-    return { exists: false, version: null };
+    return false
   }
 }
 
@@ -183,7 +183,7 @@ async function publishPackage(packagePath, packageName, packageVersion, options 
 
   // Check if package already exists
   const packageCheck = checkPackageExists(packageName, packageVersion);
-  if (packageCheck.exists) {
+  if (packageCheck) {
     log(`📦 Package ${packageName}@${packageCheck.version} already exists`);
     return
   }
@@ -232,7 +232,6 @@ async function publishPackage(packagePath, packageName, packageVersion, options 
   );
 
   if (isAlreadyPublished) {
-    log(`i ${packageName} already published - skipping`);
     return { success: true, skipped: true };
   }
 
@@ -240,7 +239,7 @@ async function publishPackage(packagePath, packageName, packageVersion, options 
     warn(`Package ${packageName} not found, might be a new package. Retrying...`);
     // For new packages, sometimes we need to retry
     await new Promise(resolve => setTimeout(resolve, 2000));
-    return publishPackage(packagePath, packageName, { ...options, retryOnFailure: false });
+    return publishPackage(packagePath, packageName, packageVersion, { ...options, retryOnFailure: false });
   }
 
   // Check for authentication issues
@@ -276,12 +275,12 @@ async function publishAllPackages(packages, options = {}) {
   const allResults = [];
   
   for (const pkg of packages) {
-    console.log("\n")
+    console.log("")
     if (pkg.type === 'go') {
       const results = await publishGoPackage(pkg, options);
       allResults.push(...results);
     } else {
-      const result = await publishPackage(pkg.path, pkg.name, options);
+      const result = await publishPackage(pkg.path, pkg.name, pkg.version, options);
       allResults.push({ package: pkg.name, ...result });
     }
   }
@@ -349,7 +348,7 @@ async function main() {
     }
   });
 
-  console.log("\n Publishing packages...\n")
+  console.log("\n Publishing packages...")
 
   try {
     // Publish packages individually
