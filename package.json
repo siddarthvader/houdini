@@ -24,7 +24,7 @@
 		"postinstall": "node -e \"try { require('husky').install(); console.log('ran prepack') } catch (e) {if (e.code !== 'MODULE_NOT_FOUND') throw e}\"",
 		"prepack": "pinst --disable",
 		"postpack": "pinst --enable",
-		"version": "changesets version"
+		"version": "changeset version"
 	},
 	"devDependencies": {
 		"@babel/plugin-syntax-import-assertions": "^7.26.0",
