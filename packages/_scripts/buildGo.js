@@ -64,7 +64,7 @@ export default async function () {
 	await Promise.all(
 		platforms.map(async (platform) => {
 			// the module name is a combination of the current package name and the platform
-			const moduleName = `${packageJSON.name}-${platform.goOS}-${platform.cpu}`
+			const moduleName = `${packageJSON.name}-${platform.nodeOS}-${platform.cpu}`
 
 			// put each binary in its own directory
 			const outputDir = path.join(buildDir, moduleName)
@@ -154,7 +154,7 @@ export default async function () {
 		devDependencies: resolvedDevDependencies,
 		optionalDependencies: Object.fromEntries(
 			platforms.map((platform) => [
-				`${packageJSON.name}-${platform.goOS}-${platform.arch}`,
+				`${packageJSON.name}-${platform.nodeOS}-${platform.cpu}`,
 				packageJSON.version,
 			])
 		),

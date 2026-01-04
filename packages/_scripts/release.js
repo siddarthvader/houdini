@@ -367,7 +367,7 @@ async function main() {
 
     log(`\n📊 Publishing Summary:`);
     log(`  ✅ Published: ${published}`);
-    log(`  ⏭  Skipped: ${skipped}`);
+    log(` ⏭  Skipped: ${skipped}`);
     log(`  ❌ Failed: ${failed}\n`);
 
     if (failed > 0) {
