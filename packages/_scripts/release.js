@@ -184,11 +184,12 @@ async function publishPackage(packagePath, packageName, packageVersion, options 
   // Check if package already exists
   const packageCheck = checkPackageExists(packageName, packageVersion);
   if (packageCheck) {
-    log(`📦 Package ${packageName}@${packageCheck.version} already exists`);
-    return
+    log(`📦 Package ${packageName}@${packageVersion} already exists`);
+    return { success: true, skipped: true };
   }
 
-  log(`Publishing ${packageName} from ${packagePath}...`);
+  log(`🚀 Publishing ${packageName}@${packageVersion} from ${packagePath}...`);
+  return { success: true };
 
   const publishArgs = ['pnpm', 'publish', '--access', 'public'];
 
@@ -251,13 +252,11 @@ async function publishPackage(packagePath, packageName, packageVersion, options 
 }
 
 async function publishGoPackage(mod, options = {}) {
-  log(`Publishing Go package: ${mod.name}`);
-
   const results = [];
 
   // Publish platform packages first
   for (const platformPkg of mod.platformPackages) {
-    const result = await publishPackage(platformPkg.path, platformPkg.name, mod.version, options);
+    const result = await publishPackage(platformPkg.path, platformPkg.name, platformPkg.version, options);
     results.push({ package: platformPkg.name, ...result });
   }
 
@@ -275,7 +274,6 @@ async function publishAllPackages(packages, options = {}) {
   const allResults = [];
   
   for (const pkg of packages) {
-    console.log("")
     if (pkg.type === 'go') {
       const results = await publishGoPackage(pkg, options);
       allResults.push(...results);
@@ -348,7 +346,7 @@ async function main() {
     }
   });
 
-  console.log("\n Publishing packages...")
+  console.log("\nPublishing packages...")
 
   try {
     // Publish packages individually
@@ -365,7 +363,7 @@ async function main() {
 
     log(`\n📊 Publishing Summary:`);
     log(`  ✅ Successful: ${successful}`);
-    log(`  ⏭ Skipped: ${skipped}`);
+    log(`  ⏭  Skipped: ${skipped}`);
     log(`  ❌ Failed: ${failed}\n`);
 
     if (failed > 0) {
