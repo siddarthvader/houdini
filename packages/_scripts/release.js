@@ -207,7 +207,7 @@ async function publishPackage(packagePath, packageName, packageVersion, options 
   const result = runCommand(publishArgs.join(' '), { cwd: packagePath });
 
   if (result.success) {
-    log(`✅ Successfully published ${packageName}`);
+    log(`✅ Successfully published ${packageName}@${packageVersion}`);
     return { success: true };
   }
 
@@ -367,7 +367,7 @@ async function main() {
     log(`\n📊 Publishing Summary:`);
     log(`  ✅ Successful: ${successful}`);
     log(`  ⏭ Skipped: ${skipped}`);
-    log(`  ❌ Failed: ${failed}`);
+    log(`  ❌ Failed: ${failed}\n`);
 
     if (failed > 0) {
       error('Some packages failed to publish');
