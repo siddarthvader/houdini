@@ -163,12 +163,23 @@ export default async function () {
 			...packageJSON.scripts,
 			postinstall: 'node postInstall.js',
 		},
-		bin: './shim.cjs',
+		bin: `bin/${packageJSON.name}`,
 	}
 
-	// read the install script
+	// create bin directory
+	const binDir = path.join(buildDir, packageJSON.name, 'bin')
+	await fs.mkdir(binDir, { recursive: true })
+
+	// read the install script and shim
 	for (const script of ['postInstall.js', 'shim.cjs']) {
-		const scriptPath = path.join(buildDir, packageJSON.name, script)
+		let scriptPath
+		if (script === 'shim.cjs') {
+			// Put the shim in bin/ directory with the package name
+			scriptPath = path.join(binDir, packageJSON.name)
+		} else {
+			// Put other scripts in the root
+			scriptPath = path.join(buildDir, packageJSON.name, script)
+		}
 
 		let scriptContents = await fs.readFile(
 			path.join(path.dirname(fileURLToPath(import.meta.url)), 'templates', script),

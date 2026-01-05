@@ -228,8 +228,8 @@ function maybeOptimizePackage() {
 			return;
 		}
 
-		const shimPath = path.join(__dirname, 'shim.cjs')
-		const tempPath = path.join(__dirname, 'shim-temp')
+		const shimPath = path.join(__dirname, 'bin', packageJSON.name)
+		const tempPath = path.join(__dirname, 'bin', `${packageJSON.name}-temp`)
 
 		try {
 			// First create a hard link to avoid taking up additional disk space
@@ -278,7 +278,7 @@ function validateBinaryVersion(binaryPath) {
 function applyManualBinaryPathOverride(overridePath) {
 	console.log(`[${packageJSON.name}] Using manual binary path: ${overridePath}`);
 
-	const shimPath = path.join(__dirname, 'shim.cjs');
+	const shimPath = path.join(__dirname, 'bin', packageJSON.name);
 	const shimContent = `#!/usr/bin/env node
 require('child_process').execFileSync(${JSON.stringify(overridePath)}, process.argv.slice(2), { stdio: 'inherit' });
 `;
@@ -320,7 +320,7 @@ if (!isPlatformSpecificPackageInstalled()) {
 		maybeOptimizePackage();
 
 		// Final validation
-		const shimPath = path.join(__dirname, 'shim.cjs');
+		const shimPath = path.join(__dirname, 'bin', packageJSON.name);
 		if (isShimJS) {
 			// Validate the JavaScript shim can find and run the binary
 			if (!validateBinaryVersion(shimPath)) {
@@ -336,7 +336,7 @@ if (!isPlatformSpecificPackageInstalled()) {
 	maybeOptimizePackage();
 
 	// Final validation
-	const shimPath = path.join(__dirname, 'shim.cjs');
+	const shimPath = path.join(__dirname, 'bin', packageJSON.name);
 	if (isShimJS) {
 		// Validate the JavaScript shim can find and run the binary
 		if (!validateBinaryVersion(shimPath)) {
