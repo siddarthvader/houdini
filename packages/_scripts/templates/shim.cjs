@@ -18,10 +18,28 @@ function getBinaryPath() {
 	const platformSpecificPackageName =
 		BINARY_DISTRIBUTION_PACKAGES[`${process.platform}-${process.arch}`]
 
+	if (!platformSpecificPackageName) {
+		// fallback to downloaded binary if platform not supported
+		return require('path').join(__dirname, binaryName)
+	}
+
 	try {
-		// resolving will fail if the optionalDependency was not installed
-		return require.resolve(`../${platformSpecificPackageName}/bin/${binaryName}`)
-	} catch (e) {
+		// Method 1: Use require.resolve to find the platform-specific package
+		// This works with pnpm and other package managers that use symlinks
+		const platformPackagePath = require.resolve(`${platformSpecificPackageName}/package.json`)
+		const platformPackageDir = require('path').dirname(platformPackagePath)
+		return require('path').join(platformPackageDir, 'bin', binaryName)
+	} catch (error) {
+		// Method 2: Check if platform package is installed as a sibling directory
+		// This works with npm and local installs
+		const siblingPath = require('path').join(__dirname, '..', platformSpecificPackageName)
+		const siblingBinaryPath = require('path').join(siblingPath, 'bin', binaryName)
+
+		if (require('fs').existsSync(siblingBinaryPath)) {
+			return siblingBinaryPath
+		}
+
+		// Method 3: Fallback to downloaded binary in main package
 		return require('path').join(__dirname, binaryName)
 	}
 }

@@ -179,6 +179,7 @@ export default async function () {
 			.replace(/my-package/g, packageJSON.name)
 			.replace(/my-binary/g, packageJSON.name)
 			.replace(/package-version/g, packageJSON.version)
+			.replace(/MY_PACKAGE_BINARY_PATH/g, `${packageJSON.name.toUpperCase().replace(/-/g, '_')}_BINARY_PATH`)
 
 		await fs.writeFile(scriptPath, scriptContents, 'utf8')
 

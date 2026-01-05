@@ -8,6 +8,7 @@
 		"tests": "vitest",
 		"tests:ui": "vitest --ui --coverage",
 		"test": "pnpm run tests",
+
 		"build:all": "turbo build",
 		"build": "turbo run build --filter=\"./packages/*\"",
 		"dev": "turbo dev --filter=\"./packages/*\"",
