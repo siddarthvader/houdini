@@ -6,7 +6,7 @@
   "scripts": {
     "web": "vite dev --host 0.0.0.0 --port 3017",
     "api": "cross-env TZ=utc e2e-api",
-    "dev": "concurrently \"pnpm run web\" \"pnpm run api\" -n \"web,api\" -c \"green,magenta\"",
+    "dev": "node ensureLinks.js && concurrently \"pnpm run web\" \"pnpm run api\" -n \"web,api\" -c \"green,magenta\"",
     "tests": "playwright test",
     "test": "npm run tests",
     "preinstall": "node preInstall.js",

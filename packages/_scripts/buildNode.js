@@ -3,6 +3,7 @@ import { replace } from 'esbuild-plugin-replace'
 import { glob } from 'glob'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { writePackageJson, sortExports, sortFiles } from './buildUtils.js'
 
 // the function to build a project assuming the directory layout
 export default async function ({ plugin }) {
@@ -43,8 +44,9 @@ export async function buildPackage({ packageJSONPath, source, outDir, plugin, on
 
 	let options = onlySource ? [source] : []
 	if (!onlySource) {
-		// look at every directory in the source
-		for (const dirname of await fs.readdir(source)) {
+		// look at every directory in the source (sorted for stability)
+		const sourceDirs = sortFiles(await fs.readdir(source))
+		for (const dirname of sourceDirs) {
 			const dir = path.join(source, dirname)
 
 			if (!(await fs.stat(dir)).isDirectory()) {
@@ -117,11 +119,11 @@ export async function buildPackage({ packageJSONPath, source, outDir, plugin, on
 	// and add explicit exports for them to handle ES module directory resolution
 	await addSubdirectoryExports(package_json, outDir)
 
+	// Sort exports for consistent ordering
+	package_json.exports = sortExports(package_json.exports)
+
 	// Write to the package root (after processing all directories)
-	await fs.writeFile(
-		path.join(outDir, '..', 'package.json'),
-		JSON.stringify(package_json, null, 4)
-	)
+	await writePackageJson(path.join(outDir, '..', 'package.json'), package_json)
 
 	// Create a build-specific package.json with paths relative to build directory
 	const buildPackageJson = { ...package_json }
@@ -145,6 +147,9 @@ export async function buildPackage({ packageJSONPath, source, outDir, plugin, on
 
 	// Also add subdirectory exports to the build package.json
 	await addSubdirectoryExportsForBuild(buildPackageJson, outDir)
+
+	// Sort exports for consistent ordering
+	buildPackageJson.exports = sortExports(buildPackageJson.exports)
 
 	// Keep bin field as-is - it should point to ./build/cmd/index.js
 	if (buildPackageJson.types && buildPackageJson.types.startsWith('./build/')) {
@@ -182,7 +187,7 @@ export async function buildPackage({ packageJSONPath, source, outDir, plugin, on
 	// The bin field should remain "./build/cmd/index.js" because that's where the file exists
 
 	// Write the build-specific package.json
-	await fs.writeFile(path.join(outDir, 'package.json'), JSON.stringify(buildPackageJson, null, 4))
+	await writePackageJson(path.join(outDir, 'package.json'), buildPackageJson)
 }
 
 // create esm build of the source
@@ -311,9 +316,11 @@ export async function copyRuntimeFiles({ outDir, source }) {
 async function addSubdirectoryExports(packageJson, outDir) {
 	try {
 		// Find all index.js files in the build directory
-		const indexFiles = await glob(path.join(outDir, '**/index.js').replaceAll('\\', '/'), {
-			nodir: true,
-		})
+		const indexFiles = sortFiles(
+			await glob(path.join(outDir, '**/index.js').replaceAll('\\', '/'), {
+				nodir: true,
+			})
+		)
 
 		for (const indexFile of indexFiles) {
 			// Get the relative path from the build directory
@@ -344,8 +351,9 @@ async function addSubdirectoryExports(packageJson, outDir) {
 // Function to add explicit exports for commonly imported files
 async function addCommonFileExports(packageJson, outDir) {
 	const commonFiles = ['types.js', 'constants.js', 'config.js']
+	const dirnames = sortFiles(['runtime', 'lib'])
 
-	for (const dirname of ['runtime', 'lib']) {
+	for (const dirname of dirnames) {
 		for (const fileName of commonFiles) {
 			const filePath = path.join(outDir, dirname, fileName)
 			try {
@@ -370,9 +378,11 @@ async function addCommonFileExports(packageJson, outDir) {
 async function addSubdirectoryExportsForBuild(packageJson, outDir) {
 	try {
 		// Find all index.js files in the build directory
-		const indexFiles = await glob(path.join(outDir, '**/index.js').replaceAll('\\', '/'), {
-			nodir: true,
-		})
+		const indexFiles = sortFiles(
+			await glob(path.join(outDir, '**/index.js').replaceAll('\\', '/'), {
+				nodir: true,
+			})
+		)
 
 		for (const indexFile of indexFiles) {
 			// Get the relative path from the build directory
@@ -403,8 +413,9 @@ async function addSubdirectoryExportsForBuild(packageJson, outDir) {
 // Function to add explicit exports for commonly imported files (build version)
 async function addCommonFileExportsForBuild(packageJson, outDir) {
 	const commonFiles = ['types.js', 'constants.js', 'config.js']
+	const dirnames = sortFiles(['runtime', 'lib'])
 
-	for (const dirname of ['runtime', 'lib']) {
+	for (const dirname of dirnames) {
 		for (const fileName of commonFiles) {
 			const filePath = path.join(outDir, dirname, fileName)
 			try {
@@ -424,3 +435,5 @@ async function addCommonFileExportsForBuild(packageJson, outDir) {
 		}
 	}
 }
+
+

@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { buildPackage, copyRuntimeFiles } from './buildNode.js'
+import { writePackageJson, sortFiles, cleanWorkspaceDependencies } from './buildUtils.js'
 
 // if a package needs to be published as a go script then we need to :
 // - compile the project for every supported os and architecture into a separate directory
@@ -86,33 +87,25 @@ export default async function () {
 				await execCmd('chmod', ['+x', path.join(outputDir, bin)], {})
 			}
 
-      // we can't have any workspace entries in our dev dependencies
-      for (const [key, value] of Object.entries(packageJSON.devDependencies || {})) {
-        if (value === 'workspace:^') {
-          delete packageJSON.devDependencies[key]
-        }
-      }
+      // Clean workspace dependencies
+      packageJSON = cleanWorkspaceDependencies(packageJSON)
 
 			// next we need to add the package.json file
-			await fs.writeFile(
+			await writePackageJson(
 				path.join(outputDir, 'package.json'),
-				JSON.stringify(
-					{
-						name: moduleName,
-						version: packageJSON.version,
-						bin,
-						os: [platform.nodeOS],
-						cpu: [platform.cpu],
-						repository: packageJSON.repository,
-						license: packageJSON.license,
-						author: packageJSON.author,
-						description: packageJSON.description,
-						keywords: packageJSON.keywords,
-						homepage: packageJSON.homepage,
-					},
-					null,
-					4
-				)
+				{
+					name: moduleName,
+					version: packageJSON.version,
+					bin,
+					os: [platform.nodeOS],
+					cpu: [platform.cpu],
+					repository: packageJSON.repository,
+					license: packageJSON.license,
+					author: packageJSON.author,
+					description: packageJSON.description,
+					keywords: packageJSON.keywords,
+					homepage: packageJSON.homepage,
+				}
 			)
 		})
 	)
@@ -201,7 +194,7 @@ export default async function () {
 
 	// write the package.json somewhere that we can use later (the package scripts will modify it)
 	const packageJSONPath = path.join(buildDir, packageJSON.name, 'package.json')
-	await fs.writeFile(packageJSONPath, JSON.stringify(packageJSON, null, 4))
+	await writePackageJson(packageJSONPath, packageJSON)
 
 	// if there is a package directory then we need to build it and add the necessary entries in our package.json
 	const packagePath = path.join(cwd, 'package')
@@ -222,7 +215,7 @@ export default async function () {
 			const updatedPackageJSON = JSON.parse(await fs.readFile(packageJSONPath, 'utf-8'))
 			if (!updatedPackageJSON.bin) {
 				updatedPackageJSON.bin = binField
-				await fs.writeFile(packageJSONPath, JSON.stringify(updatedPackageJSON, null, 4))
+				await writePackageJson(packageJSONPath, updatedPackageJSON)
 			}
 		}
 	} catch (e) {}
@@ -257,7 +250,7 @@ export default async function () {
 			const updatedPackageJSON = JSON.parse(await fs.readFile(packageJSONPath, 'utf-8'))
 			if (!updatedPackageJSON.bin) {
 				updatedPackageJSON.bin = binField
-				await fs.writeFile(packageJSONPath, JSON.stringify(updatedPackageJSON, null, 4))
+				await writePackageJson(packageJSONPath, updatedPackageJSON)
 			}
 		}
 	} catch (e) {}
@@ -267,14 +260,16 @@ export default async function () {
 	const finalPackageJSON = JSON.parse(await fs.readFile(finalPackageJSONPath, 'utf-8'))
 
 	// Compute files dynamically from what exists in the package directory
-	finalPackageJSON.files = fsSync.readdirSync(path.join(buildDir, packageJSON.name))
-		.filter(file => {
-			// Exclude package.json since it's automatically included
-			if (file === 'package.json') return false
+	finalPackageJSON.files = sortFiles(
+		fsSync.readdirSync(path.join(buildDir, packageJSON.name))
+			.filter(file => {
+				// Exclude package.json since it's automatically included
+				if (file === 'package.json') return false
 
-			// Include all other files and directories
-			return true
-		})
+				// Include all other files and directories
+				return true
+			})
+	)
 
-	await fs.writeFile(finalPackageJSONPath, JSON.stringify(finalPackageJSON, null, 4))
+	await writePackageJson(finalPackageJSONPath, finalPackageJSON)
 }
