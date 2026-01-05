@@ -447,7 +447,7 @@ export async function codegen_setup(
 }
 
 // Define the complete pipeline order
-const PIPELINE_HOOKS = [
+export const PIPELINE_HOOKS = [
 	'Config',
 	'AfterLoad',
 	'Schema',
@@ -462,7 +462,7 @@ const PIPELINE_HOOKS = [
 	'AfterGenerate',
 ] as const
 
-type PipelineHook = (typeof PIPELINE_HOOKS)[number]
+export type PipelineHook = (typeof PIPELINE_HOOKS)[number]
 
 export type RunPipelineOptions = {
 	task_id?: string

@@ -20,6 +20,14 @@ program
 		'headers to use when pulling your schema. Should be passed as KEY=VALUE'
 	)
 	.option('-v, --verbose', 'verbose error messages')
+	.option(
+		'--after-phase <phase>',
+		'start the pipeline after the specified phase (Config, AfterLoad, Schema, ExtractDocuments, AfterExtract, BeforeValidate, Validate, AfterValidate, BeforeGenerate, GenerateDocuments, GenerateRuntime, AfterGenerate)'
+	)
+	.option(
+		'--before-phase <phase>',
+		'run the pipeline up to and including the specified phase (Config, AfterLoad, Schema, ExtractDocuments, AfterExtract, BeforeValidate, Validate, AfterValidate, BeforeGenerate, GenerateDocuments, GenerateRuntime, AfterGenerate)'
+	)
 	.action(generate)
 
 // register the init command
