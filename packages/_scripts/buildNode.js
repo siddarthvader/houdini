@@ -18,6 +18,10 @@ export async function buildPackage({ packageJSONPath, source, outDir, plugin, on
 	// this script will also modify the package.json so that it exports esm modules
 	// correctly
 	const package_json = JSON.parse(await fs.readFile(packageJSONPath, 'utf-8'))
+
+	// Preserve the original bin field since we need it to point to ./build/cmd/index.js
+	const originalBin = package_json.bin
+
 	package_json.exports = {
 		'./package.json': './package.json',
 	}
@@ -82,7 +86,8 @@ export async function buildPackage({ packageJSONPath, source, outDir, plugin, on
 		}
 		// cmd can now be unbundled since we fixed all import paths
 		else if (dirname === 'cmd') {
-			package_json.bin = './cmd/index.js'
+			// Restore the original bin field (should be ./build/cmd/index.js for publishing)
+			package_json.bin = originalBin
 			await build({ outDir, packages, source: dir, plugin, bundle: false, cmd: true })
 		}
 
@@ -141,10 +146,7 @@ export async function buildPackage({ packageJSONPath, source, outDir, plugin, on
 	// Also add subdirectory exports to the build package.json
 	await addSubdirectoryExportsForBuild(buildPackageJson, outDir)
 
-	// Update other build-relative paths
-	if (buildPackageJson.bin && buildPackageJson.bin.startsWith('./build/')) {
-		buildPackageJson.bin = buildPackageJson.bin.replace('./build/', './')
-	}
+	// Keep bin field as-is - it should point to ./build/cmd/index.js
 	if (buildPackageJson.types && buildPackageJson.types.startsWith('./build/')) {
 		buildPackageJson.types = buildPackageJson.types.replace('./build/', './')
 	}
@@ -163,6 +165,21 @@ export async function buildPackage({ packageJSONPath, source, outDir, plugin, on
 			}
 		}
 	}
+
+	// Update files field to reflect actual build directory structure
+	if (buildPackageJson.files && buildPackageJson.files.includes('build')) {
+		// Get actual directories in the build output
+		const buildDirs = await fs.readdir(outDir, { withFileTypes: true })
+		const actualDirs = buildDirs
+			.filter(dirent => dirent.isDirectory())
+			.map(dirent => dirent.name)
+
+		// Replace 'build' with actual directories, plus package.json
+		buildPackageJson.files = [...actualDirs, 'package.json']
+	}
+
+	// Keep bin field as-is since it points to the correct location in the source
+	// The bin field should remain "./build/cmd/index.js" because that's where the file exists
 
 	// Write the build-specific package.json
 	await fs.writeFile(path.join(outDir, 'package.json'), JSON.stringify(buildPackageJson, null, 4))

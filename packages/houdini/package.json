@@ -130,10 +130,6 @@
             "types": "./build/runtime/cache/index.d.ts",
             "import": "./build/runtime/cache/index.js"
         },
-        "./lib/router": {
-            "types": "./build/lib/router/index.d.ts",
-            "import": "./build/lib/router/index.js"
-        },
         "./runtime/types": {
             "types": "./build/runtime/types.d.ts",
             "import": "./build/runtime/types.js"
@@ -181,6 +177,6 @@
             ]
         }
     },
-    "bin": "./cmd/index.js",
+    "bin": "./build/cmd/index.js",
     "types": "./build/lib/index.d.ts"
 }
