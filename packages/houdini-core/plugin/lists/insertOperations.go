@@ -318,18 +318,20 @@ func InsertOperationDocuments(
 				return
 			}
 
-			for _, arg := range arguments {
-				err = db.ExecStatement(insertDocumentArgument, map[string]any{
-					"name":           arg.Name,
-					"type":           arg.Type,
-					"type_modifiers": arg.TypeModifiers,
-					"document":       fragmentID,
-				})
-				if err != nil {
-					errs.Append(plugins.WrapError(err))
-					return
-				}
-			}
+			// TODO: add fragment variables for every referencd variable in a subselection
+
+			// for _, arg := range arguments {
+			// 	err = db.ExecStatement(insertDocumentArgument, map[string]any{
+			// 		"name":           arg.Name,
+			// 		"type":           arg.Type,
+			// 		"type_modifiers": arg.TypeModifiers,
+			// 		"document":       fragmentID,
+			// 	})
+			// 	if err != nil {
+			// 		errs.Append(plugins.WrapError(err))
+			// 		return
+			// 	}
+			// }
 		}
 
 		// now we need to copy argument values that show up. to recreate the nested structure we need a mapping

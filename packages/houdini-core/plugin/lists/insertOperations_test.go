@@ -85,9 +85,7 @@ func TestInsertOperationInput(t *testing.T) {
 							id
 							__typename
 						}
-					`).WithVariables(tests.ExpectedOperationVariable{
-						Name: "filter", Type: "String",
-					}),
+					`),
 				},
 			},
 			{
