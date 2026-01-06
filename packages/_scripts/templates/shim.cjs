@@ -57,7 +57,11 @@ function getBinaryPath() {
 
 			try {
 				const pnpmEntries = fs.readdirSync(pnpmDir)
-				const platformEntry = pnpmEntries.find(entry => entry.startsWith(platformSpecificPackageName + '@'))
+				// Get the expected version from the main package
+				const packageJSON = require(path.join(__dirname, '..', 'package.json'))
+				const expectedVersion = packageJSON.version
+				const expectedPnpmEntry = `${platformSpecificPackageName}@${expectedVersion}`
+				const platformEntry = pnpmEntries.find(entry => entry === expectedPnpmEntry)
 
 				if (platformEntry) {
 					const pnpmBinaryPath = path.join(pnpmDir, platformEntry, 'node_modules', platformSpecificPackageName, 'bin', binaryName)

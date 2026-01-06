@@ -208,7 +208,9 @@ function maybeOptimizePackage() {
 
 				try {
 					const pnpmEntries = fs.readdirSync(pnpmDir)
-					const platformEntry = pnpmEntries.find(entry => entry.startsWith(platformSpecificPackageName + '@'))
+					// Look for the specific version that matches BINARY_DISTRIBUTION_VERSION
+					const expectedPnpmEntry = `${platformSpecificPackageName}@${BINARY_DISTRIBUTION_VERSION}`
+					const platformEntry = pnpmEntries.find(entry => entry === expectedPnpmEntry)
 
 					if (platformEntry) {
 						binaryPath = path.join(pnpmDir, platformEntry, 'node_modules', platformSpecificPackageName, 'bin', binaryName)
