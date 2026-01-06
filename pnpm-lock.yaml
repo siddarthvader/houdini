@@ -499,6 +499,9 @@ importers:
       houdini-core:
         specifier: workspace:^
         version: link:../houdini-core
+      kleur:
+        specifier: ^4.1.5
+        version: 4.1.5
       memfs:
         specifier: ^3.4.7
         version: 3.4.12
@@ -542,9 +545,6 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
-      kleur:
-        specifier: ^4.1.5
-        version: 4.1.5
       prettier:
         specifier: ^2.8.3
         version: 2.8.3
