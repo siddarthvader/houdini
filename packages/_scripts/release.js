@@ -490,7 +490,7 @@ async function main() {
     log(`  ❌ Failed: ${failed}\n`);
 
     if (failed > 0) {
-      error('Some packages failed to publish');
+      error(`Some packages failed to publish: \n\n ${failed.map(result => result.package).join("\n")}`);
       process.exit(1);
     }
   } catch (err) {
