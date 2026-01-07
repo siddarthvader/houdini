@@ -482,14 +482,14 @@ async function main() {
     // Summary
     const published = results.filter(r => r.success && !r.skipped).length;
     const skipped = results.filter(r => r.skipped).length;
-    const failed = results.filter(r => !r.success).length;
+    const failed = results.filter(r => !r.success);
 
     log(`\n📊 Publishing Summary:`);
     log(`  ✅ Published: ${published}`);
     log(` ⏭  Skipped: ${skipped}`);
-    log(`  ❌ Failed: ${failed}\n`);
+    log(`  ❌ Failed: ${failed.length}\n`);
 
-    if (failed > 0) {
+    if (failed.length > 0) {
       error(`Some packages failed to publish: \n\n ${failed.map(result => result.package).join("\n")}`);
       process.exit(1);
     }
