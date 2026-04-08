@@ -80,8 +80,6 @@ export class QueryStore<
 		// make a shallow copy of the args so we don't mutate the arguments that the user hands us
 		const { policy, params, context } = await fetchParams(this.artifact, this.storeName, args)
 
-
-
 		// identify if this is a CSF or load
 		const isLoadFetch = Boolean('event' in params && params.event)
 		const isComponentFetch = !isLoadFetch
@@ -252,9 +250,7 @@ export async function fetchParams<_Data extends GraphQLObject, _Input>(
 		fetchFn = globalThis.fetch.bind(globalThis)
 	}
 
-	const session = await getSession(
-		params && 'event' in params ? params.event : undefined
-	)
+	const session = await getSession(params && 'event' in params ? params.event : undefined)
 
 	return {
 		context: {
