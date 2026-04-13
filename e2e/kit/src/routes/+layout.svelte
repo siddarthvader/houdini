@@ -17,13 +17,13 @@
   let routesKvp = Object.keys(routes).map((key: string) => {
     return { key, value: (routes as Record<string, string>)[key] };
   });
+  let {data, children}:{data:LayoutData} = $props()
 
-  export let data: LayoutData
-  $: ({LayoutSession: info } = data)
+  let info= $derived(data.LayoutSession)
 </script>
 
-<slot />
 
+{@render children?.()}
 <Test />
 
 <nav>
