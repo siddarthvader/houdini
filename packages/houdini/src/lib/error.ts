@@ -65,10 +65,15 @@ type HookErrorLocation = {
 	column: number
 }
 
-export function format_hook_error(rootDir: string, error: HookError, plugin: string, hook: string) {
+export function format_hook_error(
+	rootDir: string,
+	error: HookError,
+	plugin: string,
+	hook: string,
+) {
 	let message = `-- ${styleText(
 		'red',
-		`${error.kind ?? 'internal'} error during ${hook.toLowerCase()} @ ${plugin}`
+		`${error.kind ?? 'internal'} error during ${hook.toLowerCase()} @ ${plugin}`,
 	)} -----------------------------\n`
 	message += error.message + '\n'
 	message += '\n'
@@ -82,7 +87,8 @@ export function format_hook_error(rootDir: string, error: HookError, plugin: str
 					: path.join(rootDir, location.filepath)
 				const contents = readFileSync(filepath)
 				if (!contents) {
-					throw Error(`failed to read file, '${filepath}'`)
+					message += `${location.filepath}`
+					return
 				}
 
 				const lines = contents.split('\n')

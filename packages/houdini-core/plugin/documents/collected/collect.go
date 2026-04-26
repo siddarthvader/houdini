@@ -914,7 +914,7 @@ func collectDoc(
 				errs.Append(plugins.WrapError(err))
 			}
 
-			// send the result over the channel
+				// send the result over the channel
 			resultCh <- collectResult{
 				Documents:     docs,
 				PossibleTypes: possibleTypes,
@@ -1245,39 +1245,35 @@ func prepareCollectStatements(conn *sqlite.Conn, docIDs []int64) (*CollectStatem
 	// documents we're interested in
 	inputTypes, err := conn.Prepare(fmt.Sprintf(`
       WITH RECURSIVE
-        -- define our columns (including a "visited" string to track cycles)
         argumentTypes(
           parent_type,
           field_name,
           field_type,
           type_modifiers,
-          kind,
-          visited_types
+          kind
         ) AS (
 
           -- ─── base case 1: input‐object fields of the starting expected types ───
           SELECT
-            tf.parent,                   -- parent_type
-            tf.name,                     -- field_name
-            tf.type,                     -- field_type
-            tf.type_modifiers,           -- type_modifiers
-            'input'     AS kind,
-            '|' || tf.parent || '|'      AS visited_types
+            tf.parent,
+            tf.name,
+            tf.type,
+            tf.type_modifiers,
+            'input' AS kind
           FROM argument_values av
           JOIN type_fields tf
             ON av.expected_type = tf.parent
           WHERE av."document" in %s
 
-          UNION ALL
+          UNION
 
           -- ─── base case 2: enum values for those same starting types ───
           SELECT
-            ev.parent,                   -- parent_type
-            ev.value    AS field_name,   -- field_name (enum value)
-            NULL        AS field_type,   -- enums don't have nested fields
+            ev.parent,
+            ev.value    AS field_name,
+            NULL        AS field_type,
             NULL        AS type_modifiers,
-            'enum'      AS kind,
-            '|' || ev.parent || '|'      AS visited_types
+            'enum'      AS kind
           FROM argument_values av
           JOIN enum_values ev
             ON av.expected_type = ev.parent
@@ -1287,39 +1283,32 @@ func prepareCollectStatements(conn *sqlite.Conn, docIDs []int64) (*CollectStatem
 
           -- ─── base case 2b: enum values for types used as field types in selections ───
           SELECT
-            ev.parent,                   -- parent_type
-            ev.value    AS field_name,   -- field_name (enum value)
-            NULL        AS field_type,   -- enums don't have nested fields
+            ev.parent,
+            ev.value    AS field_name,
+            NULL        AS field_type,
             NULL        AS type_modifiers,
-            'enum'      AS kind,
-            '|' || ev.parent || '|'      AS visited_types
+            'enum'      AS kind
           FROM selections s
           JOIN selection_refs sr ON sr.child_id = s.id
           JOIN type_fields tf ON s.type = tf.id
           JOIN enum_values ev ON tf.type = ev.parent
           WHERE sr.document in %s
 
+          UNION
 
-
-          UNION ALL
-
-          -- ─── recursive step: for each discovered input‐object type, pull its fields ───
+          -- ─── recursive step: pull fields of each newly discovered input type ───
+          -- UNION (not UNION ALL) lets SQLite deduplicate rows, terminating the
+          -- recursion naturally when no new (parent_type, field_name, ...) tuples
+          -- are produced, even for schemas with cyclic or self-referencing types.
           SELECT
             tf.parent,
             tf.name,
             tf.type,
             tf.type_modifiers,
-            'input'     AS kind,
-            at.visited_types
-              || tf.parent || '|'
+            'input' AS kind
           FROM argumentTypes AS at
           JOIN type_fields tf
             ON tf.parent = at.field_type
-          -- only recurse into types we haven't seen yet
-          WHERE instr(
-            at.visited_types,
-            '|' || tf.parent || '|'
-          ) = 0
         )
 
       SELECT DISTINCT
@@ -1487,9 +1476,14 @@ func prepareArgumentValuesSearch(conn *sqlite.Conn, valueIDs []int64) (*sqlite.S
 
 	stmt, err := conn.Prepare(fmt.Sprintf(`
       WITH RECURSIVE all_values AS (
-          -- Base case: Select the root argument values and their children
+          -- Base case: seed argument values are always roots (parent=NULL).
+          -- We do NOT follow upward parent links here because a seed may be a
+          -- shared value (e.g. a Null literal) that is also a child in other
+          -- documents' argument_value_children trees. Following those upward
+          -- references would produce phantom pending relationships to parents
+          -- that are unreachable in the current batch.
           SELECT
-              argument_value_children.name,
+              NULL AS name,
               av.id,
               av.kind,
               av.raw,
@@ -1499,15 +1493,15 @@ func prepareArgumentValuesSearch(conn *sqlite.Conn, valueIDs []int64) (*sqlite.S
               av.expected_type_modifiers,
               av.document,
               documents.name AS document_name,
-              argument_value_children.parent,
-              av.id AS root_id  -- Track the root of the nested structure
+              NULL AS parent,
+              av.id AS root_id
           FROM argument_values av
-          LEFT JOIN argument_value_children ON argument_value_children."value" = av.id
           JOIN documents ON av.document = documents.id
           WHERE av.id IN %s
 
           UNION
 
+          -- Recursive case: descend into children of already-visited values.
           SELECT
               argument_value_children.name,
               av.id,
@@ -1520,10 +1514,9 @@ func prepareArgumentValuesSearch(conn *sqlite.Conn, valueIDs []int64) (*sqlite.S
               av.document,
               documents.name AS document_name,
               argument_value_children.parent,
-              all_values.root_id  -- Carry over the root_id from the base case
+              all_values.root_id
           FROM argument_value_children
-          JOIN all_values ON all_values.id = argument_value_children.parent  -- Join the recursive table to itself
-          LEFT JOIN argument_value_children AS children ON children."value" = argument_value_children.id
+          JOIN all_values ON all_values.id = argument_value_children.parent
           JOIN argument_values av ON argument_value_children."value" = av.id
           JOIN documents ON av.document = documents.id
       )

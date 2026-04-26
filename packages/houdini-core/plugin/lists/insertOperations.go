@@ -336,7 +336,14 @@ func InsertOperationDocuments(
 
 		// now we need to copy argument values that show up. to recreate the nested structure we need a mapping
 		// of old values to the copied ones
+		type argValueChild struct {
+			Name   string `json:"name"`
+			Value  int64  `json:"value"`
+			Row    int64  `json:"row"`
+			Column int64  `json:"column"`
+		}
 		valueMap := map[int64]map[int64]int64{}
+		foundRows := map[int64][]argValueChild{}
 		searchArgumentValues.SetInt64("$document", documentID)
 		err = db.StepStatement(ctx, searchArgumentValues, func() {
 			// every row that we get in the query needs to be inserted as an argument value
@@ -349,16 +356,16 @@ func InsertOperationDocuments(
 			expectedTypeModifiers := searchArgumentValues.GetText("expected_type_modifiers")
 			childrenString := searchArgumentValues.GetText("children")
 
-			children := []struct {
-				Name   string `json:"name"`
-				Value  int64  `json:"value"`
-				Row    int64  `json:"row"`
-				Column int64  `json:"column"`
-			}{}
+			var children []argValueChild
 			err = json.Unmarshal([]byte(childrenString), &children)
 			if err != nil {
 				errs.Append(plugins.WrapError(err))
 				return
+			}
+
+			// save children for the second pass once all valueMap entries are populated
+			if len(children) > 0 {
+				foundRows[id] = children
 			}
 
 			for _, target := range copyTargets {
@@ -384,14 +391,31 @@ func InsertOperationDocuments(
 				}
 
 				valueMap[target][id] = newID
+			}
+		})
+		if err != nil {
+			errs.Append(plugins.WrapError(err))
+			return
+		}
 
-				// process any children
-				for _, child := range children {
+		// second pass: insert argument_value_children now that valueMap is fully populated
+		for oldParent, children := range foundRows {
+			for _, child := range children {
+				for _, target := range copyTargets {
+					newParent := valueMap[target][oldParent]
+					newChild, ok := valueMap[target][child.Value]
+					if !ok {
+						errs.Append(&plugins.Error{
+							Message: fmt.Sprintf("could not find child value when copying list argument values: %v", child.Value),
+						})
+						return
+					}
 					err = db.ExecStatement(insertArgumentValueChildren, map[string]any{
 						"name":     child.Name,
+						"parent":   newParent,
+						"value":    newChild,
 						"row":      child.Row,
 						"column":   child.Column,
-						"value":    newID,
 						"document": target,
 					})
 					if err != nil {
@@ -400,10 +424,6 @@ func InsertOperationDocuments(
 					}
 				}
 			}
-		})
-		if err != nil {
-			errs.Append(plugins.WrapError(err))
-			return
 		}
 
 		// now we need to apply the selection arguments with the new values
