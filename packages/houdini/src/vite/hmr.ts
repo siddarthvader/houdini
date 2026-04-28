@@ -80,6 +80,7 @@ export function document_hmr(ctx: VitePluginContext): VitePlugin {
 
 				// so let's just blow away any raw documents related to the changed files and then we'll call extract
 				const placeholders = relativePaths.map(() => '?').join(', ')
+
 				ctx.db
 					.prepare(
 						`
@@ -288,41 +289,40 @@ export function createDebounceHmr(debounceMs: number = 50) {
 				await Promise.all(
 					Array.from(filesToProcess.entries()).map(async ([filepath, readFn]) => {
 						try {
-							const content = await readFn()
-							filesWithContent[filepath] = content
-						} catch (error) {
-							// Store empty string or rethrow based on your needs
-							filesWithContent[filepath] = ''
+							filesWithContent[filepath] = await readFn()
+						} catch {
+							// file disappeared between the HMR event and now — skip it
 						}
 					})
 				)
 
 				try {
 					await callback(filesWithContent, currentBatchId.toString())
-				} catch {}
+				} catch (err) {
+					console.error('[houdini] HMR pipeline error:', err)
+				}
 
-				// Process any pending batch that accumulated
-				if (pendingBatch) {
+				// Drain any pending batches that accumulated while we were processing
+				while (pendingBatch) {
 					const { files: nextFiles, batchId: nextBatchId } = pendingBatch
 					pendingBatch = null
 
-					// Read files for pending batch
 					const nextFilesWithContent: Record<string, string> = {}
-					const nextReadPromises = Array.from(nextFiles.entries()).map(
-						async ([filepath, readFn]) => {
+					await Promise.all(
+						Array.from(nextFiles.entries()).map(async ([filepath, readFn]) => {
 							try {
-								const content = await readFn()
-								nextFilesWithContent[filepath] = content
-							} catch (error) {
-								nextFilesWithContent[filepath] = ''
+								nextFilesWithContent[filepath] = await readFn()
+							} catch {
+								// file disappeared between the HMR event and now — skip it
 							}
-						}
+						})
 					)
 
-					await Promise.all(nextReadPromises)
 					try {
 						await callback(nextFilesWithContent, nextBatchId.toString())
-					} catch {}
+					} catch (err) {
+						console.error('[houdini] HMR pipeline error:', err)
+					}
 				}
 			} finally {
 				isProcessing = false
